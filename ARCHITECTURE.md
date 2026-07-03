@@ -41,6 +41,12 @@ do something it currently cannot (and is notified when its rights change at runt
 The agent-facing API is the MCP tool catalog (§8). No custom REST API is invented — any
 MCP-compatible client (Claude Code, Claude Desktop, etc.) can consume it directly.
 
+**Self-advertisement.** The server describes itself over the standard MCP discovery
+surfaces so an agent needs no prior knowledge (§5a): `instructions` returned at
+`initialize`, per-tool **annotations** (`readOnly`/`destructive`/`idempotent` hints) and
+titles, and two **resources** — `docs://mcp-postgres/guide` (the capability guide) and
+`capabilities://current` (the live report).
+
 ---
 
 ## 3. Components & filesystem layout
@@ -151,6 +157,24 @@ The report is exposed to the agent in two complementary ways:
    refusal rather than acting.
 
 `capability_changed` notices (from §4) keep the agent's view in sync during a session.
+
+<a id="5a"></a>
+### 5a. Self-advertisement surfaces
+
+Beyond the report, the server advertises *what it is and how to drive it* using the
+standard MCP discovery mechanisms, so a first-time agent can orient itself:
+
+- **`initialize` instructions** — a concise overview (what the service is, the tier model,
+  the result envelope, "call `get_capabilities` first") handed to the client at connect
+  time via FastMCP's `instructions=`.
+- **Tool annotations & titles** — every tool carries a human-readable title and MCP
+  `ToolAnnotations` hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+  `openWorldHint`) so a client can reason about safety before calling.
+- **Resources** — `docs://mcp-postgres/guide` (Markdown capability guide) and
+  `capabilities://current` (the live JSON report, same payload as `get_capabilities`).
+
+The advertised prose lives in `docs.py` (single source); resources are registered in
+`tools/discovery.py`.
 
 ---
 

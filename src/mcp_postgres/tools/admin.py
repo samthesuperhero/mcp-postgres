@@ -7,6 +7,7 @@ itself remains the final authority on every statement.
 
 from __future__ import annotations
 
+from mcp.types import ToolAnnotations
 from psycopg import sql
 
 from ..capabilities import DbTier
@@ -17,7 +18,12 @@ def register(mcp, ctx) -> None:
     caps = ctx.caps
     db = ctx.db
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Create database",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, openWorldHint=False
+        ),
+    )
     def create_database(name: str, owner: str | None = None) -> dict:
         """Create a database, optionally owned by a role. Requires DB_ADMIN."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
@@ -32,7 +38,12 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "database": name, "owner": owner}, info)
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Create role",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, openWorldHint=False
+        ),
+    )
     def create_role(
         name: str,
         login: bool = True,
@@ -60,7 +71,12 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "role": name}, info)
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Grant privileges",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+        ),
+    )
     def grant(privileges: str, on_object: str, to_role: str) -> dict:
         """Run GRANT <privileges> ON <on_object> TO <role>. Requires DB_ADMIN."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
@@ -72,7 +88,12 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "granted": privileges, "on": on_object, "to": to_role}, info)
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Revoke privileges",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+        ),
+    )
     def revoke(privileges: str, on_object: str, from_role: str) -> dict:
         """Run REVOKE <privileges> ON <on_object> FROM <role>. Requires DB_ADMIN."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
@@ -84,7 +105,12 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "revoked": privileges, "on": on_object, "from": from_role}, info)
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Administrative SQL",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=True, openWorldHint=False
+        ),
+    )
     def admin_sql(sql_text: str) -> dict:
         """Execute an arbitrary administrative statement. Requires DB_ADMIN."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)

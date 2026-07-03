@@ -21,6 +21,8 @@ import time
 from datetime import datetime, timezone
 from enum import IntEnum
 
+from .docs import version
+
 log = logging.getLogger(__name__)
 
 
@@ -160,6 +162,7 @@ class CapabilityManager:
         info = self.db_info(force=True)
         return {
             "service": "mcp-postgres",
+            "version": version(),
             "os_tier": os_t.name,
             "db_tier": info["tier"].name,
             "connected_role": info["role"],

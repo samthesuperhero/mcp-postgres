@@ -30,6 +30,12 @@ Tools are **capability-gated** — the agent sees only what the current privileg
 Privileges are re-checked before every action, so the agent is told immediately if its rights
 change while running.
 
+The server is **self-describing**: on connect it returns MCP `instructions` (an overview, the
+tier model, and the result envelope), every tool carries safety annotations, and two resources
+are published — `docs://mcp-postgres/guide` (full capability guide) and `capabilities://current`
+(the live report). An agent can learn what it may do without any prior knowledge — start by
+calling `get_capabilities`.
+
 ---
 
 ## Requirements

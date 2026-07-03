@@ -15,8 +15,9 @@ from .capabilities import CapabilityManager
 from .config import Config, load_config
 from .context import AppContext
 from .db import Database
+from .docs import REPO_URL, SERVER_INSTRUCTIONS
 from .privclient import PrivClient
-from .tools import admin, config_files, introspection, query
+from .tools import admin, config_files, discovery, introspection, query
 
 log = logging.getLogger("mcp_postgres")
 
@@ -61,6 +62,8 @@ def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
 
     mcp = FastMCP(
         "mcp-postgres",
+        instructions=SERVER_INSTRUCTIONS,
+        website_url=REPO_URL,
         host=cfg.server.bind,
         port=cfg.server.port,
         streamable_http_path=cfg.server.path,
@@ -70,6 +73,7 @@ def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
     query.register(mcp, ctx)
     admin.register(mcp, ctx)
     config_files.register(mcp, ctx)
+    discovery.register(mcp, ctx)
 
     log.info(
         "capabilities at startup: OS=%s DB=%s; enabled tools: %s",

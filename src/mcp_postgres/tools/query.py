@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mcp.types import ToolAnnotations
+
 from ..capabilities import DbTier
 from .base import attach, guard_or_error, rows_as_dicts
 
@@ -10,7 +12,10 @@ def register(mcp, ctx) -> None:
     caps = ctx.caps
     db = ctx.db
 
-    @mcp.tool()
+    @mcp.tool(
+        title="Run read-only query",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    )
     def run_read_query(sql: str, max_rows: int = 1000) -> dict:
         """Run a SELECT (or other read) inside a forced READ ONLY transaction.
 
@@ -37,7 +42,12 @@ def register(mcp, ctx) -> None:
 
     # Registered unconditionally so a role that gains write access mid-session is
     # still protected by the guard; only enabled in the report when the tier holds.
-    @mcp.tool()
+    @mcp.tool(
+        title="Execute SQL (DML/DDL)",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=True, openWorldHint=False
+        ),
+    )
     def execute_sql(sql: str) -> dict:
         """Execute a DML/DDL statement. Requires DB tier DB_READWRITE or higher."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_READWRITE)

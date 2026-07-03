@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+from mcp.types import ToolAnnotations
+
 from ..capabilities import CapabilityError, DbTier
 from .base import attach, guard_or_error, rows_as_dicts
+
+# All tools in this module only read; none touch anything outside the local DB.
+READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
 def register(mcp, ctx) -> None:
     caps = ctx.caps
     db = ctx.db
 
-    @mcp.tool()
+    @mcp.tool(title="Get capabilities", annotations=READ_ONLY)
     def get_capabilities() -> dict:
         """Report the server's current OS and DB privilege tiers and enabled tools."""
         return caps.report(ctx.enabled_tools)
 
-    @mcp.tool()
+    @mcp.tool(title="Health check", annotations=READ_ONLY)
     def health_check() -> dict:
         """Check that the service is up and PostgreSQL is reachable."""
         try:
@@ -40,7 +45,7 @@ def register(mcp, ctx) -> None:
             notices,
         )
 
-    @mcp.tool()
+    @mcp.tool(title="List databases", annotations=READ_ONLY)
     def list_databases() -> dict:
         """List non-template databases with owner and encoding."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_READONLY)
@@ -53,7 +58,7 @@ def register(mcp, ctx) -> None:
         )
         return attach({"ok": True, "databases": rows_as_dicts(cols, rows)}, info)
 
-    @mcp.tool()
+    @mcp.tool(title="List schemas", annotations=READ_ONLY)
     def list_schemas() -> dict:
         """List non-system schemas in the current database."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_READONLY)
@@ -66,7 +71,7 @@ def register(mcp, ctx) -> None:
         )
         return attach({"ok": True, "schemas": [r[0] for r in rows]}, info)
 
-    @mcp.tool()
+    @mcp.tool(title="List tables", annotations=READ_ONLY)
     def list_tables(schema: str = "public") -> dict:
         """List tables and views in a schema (default: public)."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_READONLY)
@@ -79,7 +84,7 @@ def register(mcp, ctx) -> None:
         )
         return attach({"ok": True, "schema": schema, "tables": rows_as_dicts(cols, rows)}, info)
 
-    @mcp.tool()
+    @mcp.tool(title="Describe table", annotations=READ_ONLY)
     def describe_table(table: str, schema: str = "public") -> dict:
         """Describe a table's columns and primary key."""
         allowed, info = guard_or_error(caps, db_min=DbTier.DB_READONLY)

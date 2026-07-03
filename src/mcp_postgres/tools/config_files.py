@@ -7,9 +7,18 @@ service reloads PostgreSQL (unless the setting needs a full restart).
 
 from __future__ import annotations
 
+from mcp.types import ToolAnnotations
+
 from ..capabilities import DbTier, OsTier
 from ..confedit import append_hba_rule, set_conf_value
 from .base import attach, guard_or_error
+
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+# Config writes edit a file in place (with a timestamped backup) but are not
+# "destructive" in the delete-data sense; re-applying the same change is a no-op.
+_WRITE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
 
 
 def _reload_postgres(ctx) -> tuple[bool, str | None]:
@@ -32,7 +41,7 @@ def register(mcp, ctx) -> None:
     db = ctx.db
     priv = ctx.priv
 
-    @mcp.tool()
+    @mcp.tool(title="Read postgresql.conf", annotations=_READ_ONLY)
     def read_postgresql_conf() -> dict:
         """Read the contents of postgresql.conf. Requires OS_CONFIG."""
         allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
@@ -44,7 +53,7 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "file": "postgresql.conf", "content": content}, info)
 
-    @mcp.tool()
+    @mcp.tool(title="Read pg_hba.conf", annotations=_READ_ONLY)
     def read_pg_hba_conf() -> dict:
         """Read the contents of pg_hba.conf. Requires OS_CONFIG."""
         allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
@@ -56,7 +65,7 @@ def register(mcp, ctx) -> None:
             return attach({"ok": False, "error": str(exc)}, info)
         return attach({"ok": True, "file": "pg_hba.conf", "content": content}, info)
 
-    @mcp.tool()
+    @mcp.tool(title="Update postgresql.conf setting", annotations=_WRITE)
     def update_postgresql_setting(name: str, value: str, reload: str = "auto") -> dict:
         """Set a postgresql.conf parameter (with backup), then reload if applicable.
 
@@ -103,7 +112,7 @@ def register(mcp, ctx) -> None:
             )
         return attach(result, info)
 
-    @mcp.tool()
+    @mcp.tool(title="Append pg_hba.conf rule", annotations=_WRITE)
     def update_pg_hba_rule(rule: str, reload: str = "auto") -> dict:
         """Append a pg_hba.conf rule line (with backup), then reload. Requires OS_CONFIG.
 
@@ -136,7 +145,7 @@ def register(mcp, ctx) -> None:
             result["reload_error"] = reload_error
         return attach(result, info)
 
-    @mcp.tool()
+    @mcp.tool(title="Reload PostgreSQL config", annotations=_WRITE)
     def reload_postgresql() -> dict:
         """Reload PostgreSQL configuration. Requires OS_CONFIG or DB_ADMIN."""
         # Allowed if we can reload via sudo OR via SQL as an admin role.
