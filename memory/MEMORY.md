@@ -1,0 +1,2 @@
+- [No CRLF/LF warnings](no-crlf-lf-warnings.md) — pin LF via .gitattributes; the "LF will be replaced by CRLF" warning must never appear
+- [Never commit without approval](never-commit-without-approval.md) — no git commit/push until the user explicitly approves each one
