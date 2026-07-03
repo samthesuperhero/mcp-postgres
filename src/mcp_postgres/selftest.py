@@ -17,12 +17,23 @@ from .config import Config, load_config
 class Result:
     def __init__(self):
         self.checks: list[tuple[str, bool, str]] = []
+        self.extras: dict[str, str] = {}  # verbose-only extra detail, keyed by check name
 
-    def add(self, name: str, ok: bool, detail: str = "") -> None:
+    def add(self, name: str, ok: bool, detail: str = "", extra: str = "") -> None:
         self.checks.append((name, ok, detail))
+        if extra:
+            self.extras[name] = extra
 
     def ok(self) -> bool:
         return all(ok for _n, ok, _d in self.checks)
+
+
+def _explain(exc: BaseException) -> str:
+    """Recursively unwrap anyio/asyncio ExceptionGroups to their leaf cause(s)."""
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_explain(e) for e in exc.exceptions)
+    msg = str(exc).strip()
+    return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
 
 def _endpoint(cfg: Config) -> str:
@@ -85,6 +96,9 @@ async def _live_checks(cfg: Config, res: Result) -> None:
         res.add("mcp-client-import", False, str(exc))
         return
 
+    import json
+    import traceback
+
     url = _endpoint(cfg)
     headers = {"Authorization": f"Bearer {cfg.token}"} if cfg.token else {}
     try:
@@ -94,18 +108,21 @@ async def _live_checks(cfg: Config, res: Result) -> None:
                 res.add("mcp-initialize", True, url)
 
                 tools = await session.list_tools()
-                names = {t.name for t in tools.tools}
+                names = sorted(t.name for t in tools.tools)
                 res.add(
                     "tools-listed",
-                    {"get_capabilities", "health_check", "run_read_query"} <= names,
-                    ", ".join(sorted(names)),
+                    {"get_capabilities", "health_check", "run_read_query"} <= set(names),
+                    f"{len(names)} tools",
+                    extra="tools: " + ", ".join(names),
                 )
 
                 caps = _structured(await session.call_tool("get_capabilities", {}))
                 res.add(
                     "get_capabilities",
                     bool(caps.get("os_tier") and caps.get("db_tier")),
-                    f"OS={caps.get('os_tier')} DB={caps.get('db_tier')} role={caps.get('connected_role')}",
+                    f"OS={caps.get('os_tier')} DB={caps.get('db_tier')} "
+                    f"role={caps.get('connected_role')} v={caps.get('version')}",
+                    extra=json.dumps(caps, indent=2, default=str),
                 )
 
                 health = _structured(await session.call_tool("health_check", {}))
@@ -123,7 +140,14 @@ async def _live_checks(cfg: Config, res: Result) -> None:
                     "write correctly rejected" if ro.get("ok") is False else "UNEXPECTEDLY ALLOWED",
                 )
     except Exception as exc:  # noqa: BLE001
-        res.add("mcp-live", False, f"could not reach {url}: {exc}")
+        detail = _explain(exc)
+        if "401" in detail:
+            detail += (
+                " — bearer token mismatch: the token the self-test sent does not match the "
+                "running server's. Check /etc/mcp-postgres/token and restart the service so it "
+                "reloads the current token."
+            )
+        res.add("mcp-live", False, f"could not reach {url}: {detail}", extra=traceback.format_exc())
 
 
 def _db_check(cfg: Config, res: Result) -> None:
@@ -188,17 +212,45 @@ def run_all(cfg: Config) -> Result:
     return res
 
 
+def _print_preamble(cfg: Config) -> None:
+    """Non-secret environment summary. Never prints the token or DB password."""
+    from .docs import version
+
+    tok = cfg.token or ""
+    token_state = f"configured ({len(tok)} chars)" if tok else "NOT CONFIGURED"
+    print(f"version:   {version()}")
+    print(f"endpoint:  {_endpoint(cfg)}")
+    print(f"token:     {token_state}")
+    print(f"database:  {cfg.database.host}:{cfg.database.port} {cfg.database.user}/{cfg.database.dbname}")
+
+
 def main() -> None:
+    import argparse
+
+    p = argparse.ArgumentParser(description="mcp-postgres self-test")
+    p.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="terse PASS/FAIL summary only (default: full verbose output)",
+    )
+    verbose = not p.parse_args().quiet
+
     cfg = load_config()
-    res = run_all(cfg)
     print("mcp-postgres self-test")
     print("-" * 60)
+    if verbose:
+        _print_preamble(cfg)
+        print("-" * 60)
+
+    res = run_all(cfg)
     for name, ok, detail in res.checks:
         mark = "PASS" if ok else "FAIL"
         line = f"[{mark}] {name}"
         if detail:
             line += f" — {detail}"
         print(line)
+        if verbose and name in res.extras:
+            for ln in res.extras[name].splitlines():
+                print(f"           {ln}")
     print("-" * 60)
     total = len(res.checks)
     passed = sum(1 for _n, ok, _d in res.checks if ok)
