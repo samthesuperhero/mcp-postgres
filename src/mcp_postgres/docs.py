@@ -35,8 +35,10 @@ on ANY database in the cluster it can connect to — not just one.
 
 START HERE
 - Call `get_capabilities` (or read the `{CAPABILITIES_URI}` resource) before acting.
-  It reports the current target database, the privilege tiers, and the exact
-  `enabled_tools` you may use right now. For the full catalog and semantics, read `{GUIDE_URI}`.
+  It reports the current target database, the privilege tiers, the exact
+  `enabled_tools` you may use right now, and an `environment` block describing what you
+  are actually talking to — the PostgreSQL version, the extensions (activated / available
+  / preloaded), and the host OS. For the full catalog and semantics, read `{GUIDE_URI}`.
 
 CHOOSING A DATABASE
 - Everything acts on the current target database (`database` in every result).
@@ -119,6 +121,25 @@ Every tool returns a JSON object:
 - `error` — a message when `ok` is `false` (insufficient tier, SQL error, …).
 - `capability_changed` — a list of change notices, present on any result when your
   privileges shifted since the previous call.
+
+## Environment
+
+`get_capabilities` (and the `{CAPABILITIES_URI}` resource) also carries an `environment`
+block describing the concrete cluster and host — read it to know what you are talking to
+before choosing SQL syntax or features:
+
+- `environment.postgresql` — `version_string` (full `SELECT version()`), `server_version`,
+  numeric `version_num`, and `major`.
+- `environment.postgresql.extensions` — three parallel lists: `activated` (extensions
+  created in the current database, name + version), `available` (present on disk but not
+  yet created here, name + default_version), and `preloaded_libraries`
+  (`shared_preload_libraries`, loaded into the server). A preload-only module has no SQL
+  extension, and an extension can be activated without being preloaded — hence three lists.
+- `environment.os` — host OS `family`, `name`, `version`, `pretty_name`, `kernel`, `arch`.
+  The service runs on the PostgreSQL host, so this is the cluster's OS.
+
+The PostgreSQL version and OS are fixed for the process; `extensions.activated` reflects the
+**current** database and changes when you `use_database`.
 
 ## Tool catalog (capability-gated)
 

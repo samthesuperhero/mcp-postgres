@@ -157,6 +157,24 @@ async def _live_checks(cfg: Config, res: Result, wait: float = 0.0) -> None:
                         f"reported database={caps.get('database')!r} (default {cfg.database.dbname!r})",
                     )
 
+                    # The report must advertise the environment: host OS, PostgreSQL
+                    # version, and the three-way extension picture.
+                    env = caps.get("environment") or {}
+                    os_env = env.get("os") or {}
+                    pg = env.get("postgresql") or {}
+                    exts = pg.get("extensions") or {}
+                    res.add(
+                        "environment",
+                        bool(os_env.get("family"))
+                        and bool(pg.get("version_num"))
+                        and isinstance(exts.get("activated"), list),
+                        f"pg={pg.get('server_version')} "
+                        f"os={os_env.get('pretty_name') or os_env.get('family')} "
+                        f"exts: {len(exts.get('activated') or [])} activated, "
+                        f"{len(exts.get('available') or [])} available, "
+                        f"{len(exts.get('preloaded_libraries') or [])} preloaded",
+                    )
+
                     health = _structured(await session.call_tool("health_check", {}))
                     res.add("health_check", bool(health.get("database_connected")), str(health.get("server_version")))
 

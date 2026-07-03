@@ -21,6 +21,7 @@ import time
 from datetime import datetime, timezone
 from enum import IntEnum
 
+from . import environment
 from .docs import version
 
 log = logging.getLogger(__name__)
@@ -205,6 +206,7 @@ class CapabilityManager:
             "config_file": info["config_file"],
             "hba_file": info["hba_file"],
             "database_error": info["error"],
+            "environment": environment.probe(self.db),
             "enabled_tools": enabled_tools_for(os_t, info["tier"]),
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
