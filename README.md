@@ -69,6 +69,10 @@ is generated automatically (or set `MCP_PG_TOKEN`). The installer then:
 
 The printed output includes the generated bearer token — save it for step 4.
 
+Re-running the installer is safe: it **won't overwrite an existing `config.toml`, DB password,
+or token**. To change them, pass `--force` (regenerates config from the flags and rotates the
+token) or supply a new value via `MCP_PG_DB_PASSWORD` / `MCP_PG_TOKEN`.
+
 ### 3. Create the PostgreSQL role
 The service connects as role `mcp`. Create it with whatever privileges you intend (read-only,
 read-write, or admin — the service adapts):

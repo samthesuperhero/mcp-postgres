@@ -266,6 +266,10 @@ is auto-generated if not supplied.
    wheels if present, else PyPI).
 5. **Config & secrets** — write `/etc/mcp-postgres/config.toml` from the flags; write `secret`
    and `token` (`0600`, owned by `mcp-postgres`); `config.toml` is `0640 root:mcp-postgres`.
+   **Idempotent:** an existing `config.toml`/`secret`/`token` is left untouched on re-run —
+   the installer only writes one when it's missing, when the matching env var
+   (`MCP_PG_DB_PASSWORD` / `MCP_PG_TOKEN`) supplies a new value, or when `--force` is given
+   (which also rotates a generated token). So upgrades never clobber a live password or token.
 6. **Optional `--create-db-role`** — connect as the `postgres` superuser and
    `CREATE ROLE mcp LOGIN PASSWORD …` (for operators who have that access; otherwise the role is
    a manual DBA step).

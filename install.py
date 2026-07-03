@@ -173,6 +173,10 @@ def _chown_tree(root: Path) -> None:
 
 
 def write_config(args) -> None:
+    cfg = CONFIG_DIR / "config.toml"
+    if cfg.exists() and not args.force:
+        info(f"{cfg} exists — keeping (use --force to regenerate from flags)")
+        return
     template = (REPO / "packaging" / "config.toml.template").read_text(encoding="utf-8")
     rendered = (
         template.replace("__BIND__", args.bind)
@@ -182,7 +186,6 @@ def write_config(args) -> None:
         .replace("__DBNAME__", args.db_name)
         .replace("__LOGLEVEL__", args.log_level)
     )
-    cfg = CONFIG_DIR / "config.toml"
     cfg.write_text(rendered, encoding="utf-8")
     _chown(cfg, "root", SERVICE_USER)
     os.chmod(cfg, 0o640)
@@ -200,25 +203,54 @@ def write_secret(name: str, value: str) -> None:
     info(f"wrote {path} (0600)")
 
 
-def resolve_db_password(args) -> str:
-    pw = os.environ.get("MCP_PG_DB_PASSWORD")
-    if pw:
-        return pw
-    if args.non_interactive:
-        die("no DB password: set MCP_PG_DB_PASSWORD or run interactively")
+def _read_existing(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _prompt_password(db_user: str) -> str:
     while True:
-        p1 = getpass.getpass(f"Password for PostgreSQL role '{args.db_user}': ")
+        p1 = getpass.getpass(f"Password for PostgreSQL role '{db_user}': ")
         p2 = getpass.getpass("Confirm password: ")
         if p1 and p1 == p2:
             return p1
         print("passwords empty or did not match; try again", file=sys.stderr)
 
 
-def resolve_token() -> tuple[str, bool]:
-    tok = os.environ.get("MCP_PG_TOKEN")
-    if tok:
-        return tok, False
-    return secrets.token_hex(32), True
+def resolve_db_password(args) -> tuple[str, bool]:
+    """Return (password, should_write).
+
+    An existing secret file is preserved (and read, so --create-db-role still
+    works) unless --force or an explicit MCP_PG_DB_PASSWORD is provided.
+    """
+    path = CONFIG_DIR / "secret"
+    env = os.environ.get("MCP_PG_DB_PASSWORD")
+    if env:
+        return env, True
+    if path.exists() and not args.force:
+        info(f"{path} exists — keeping existing DB password (use --force to change)")
+        return _read_existing(path), False
+    if args.non_interactive:
+        die("no DB password: set MCP_PG_DB_PASSWORD or run without --non-interactive")
+    return _prompt_password(args.db_user), True
+
+
+def resolve_token(args) -> tuple[str, bool, bool]:
+    """Return (token, should_write, generated).
+
+    An existing token file is preserved unless --force or an explicit
+    MCP_PG_TOKEN is provided; otherwise a fresh token is generated.
+    """
+    path = CONFIG_DIR / "token"
+    env = os.environ.get("MCP_PG_TOKEN")
+    if env:
+        return env, True, False
+    if path.exists() and not args.force:
+        info(f"{path} exists — keeping existing bearer token (use --force to rotate)")
+        return _read_existing(path), False, False
+    return secrets.token_hex(32), True, True
 
 
 def create_db_role(args, password: str) -> None:
@@ -274,6 +306,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start", action="store_true", help="enable and start the service")
     p.add_argument("--run-selftest", action="store_true", help="run self-tests after install")
     p.add_argument("--non-interactive", action="store_true", help="never prompt (secrets via env)")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing config.toml and regenerate/rotate secrets",
+    )
     return p.parse_args()
 
 
@@ -281,8 +318,8 @@ def main() -> None:
     args = parse_args()
     preflight(args)
 
-    password = resolve_db_password(args)
-    token, generated_token = resolve_token()
+    password, write_pw = resolve_db_password(args)
+    token, write_token, token_generated = resolve_token(args)
 
     ensure_user()
     if args.grant_wheel:
@@ -290,15 +327,17 @@ def main() -> None:
     lay_down_files()
     build_venv(args)
     write_config(args)
-    write_secret("secret", password)
-    write_secret("token", token)
+    if write_pw:
+        write_secret("secret", password)
+    if write_token:
+        write_secret("token", token)
     _chown(CONFIG_DIR)
     os.chmod(CONFIG_DIR, 0o750)
 
     if args.create_db_role:
         create_db_role(args, password)
 
-    activate(args, token, generated_token)
+    activate(args, token, token_generated and write_token)
 
 
 if __name__ == "__main__":
