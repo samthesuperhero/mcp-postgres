@@ -289,6 +289,159 @@ def _allowlist_check(cfg: Config, res: Result) -> None:
         res.add("config-allowlist", True, f"skipped ({exc})")
 
 
+def _oauth_base(cfg: Config) -> str:
+    host = cfg.server.bind
+    if host in ("0.0.0.0", "::", ""):
+        host = "127.0.0.1"
+    return f"http://{host}:{cfg.server.port}"
+
+
+async def _oauth_flow(cfg: Config, res: Result) -> None:
+    """Exercise the OAuth surface against the *local* endpoint.
+
+    The OAuth/well-known routes live at the app root (not under the resource
+    path). Metadata advertises the public ``issuer``, but the endpoints answer on
+    fixed paths, so we drive the whole grant against ``127.0.0.1`` here — no nginx
+    round-trip needed — and finish by opening a real MCP session with the freshly
+    issued access token, proving the token actually authorizes.
+    """
+    import base64
+    import hashlib
+    import secrets
+    from urllib.parse import parse_qs, urlparse
+
+    import httpx
+    from mcp import ClientSession
+
+    base = _oauth_base(cfg)
+    path = cfg.server.path
+    async with httpx.AsyncClient(base_url=base, timeout=15.0) as c:
+        # 1. Discovery documents.
+        asm = await c.get("/.well-known/oauth-authorization-server")
+        prm = await c.get(f"/.well-known/oauth-protected-resource{path}")
+        md = asm.json() if asm.status_code == 200 else {}
+        pm = prm.json() if prm.status_code == 200 else {}
+        res.add(
+            "oauth-metadata",
+            asm.status_code == 200
+            and prm.status_code == 200
+            and str(md.get("registration_endpoint", "")).endswith("/register")
+            and bool(pm.get("authorization_servers")),
+            f"AS={asm.status_code} issuer={md.get('issuer')} · PRM={prm.status_code} "
+            f"resource={pm.get('resource')}",
+        )
+
+        # 2. Unauthenticated resource request must challenge with the metadata URL.
+        chal = await c.get(path)
+        wa = chal.headers.get("www-authenticate", "")
+        res.add(
+            "oauth-challenge",
+            chal.status_code == 401 and "resource_metadata" in wa,
+            f"{chal.status_code}; WWW-Authenticate {'present' if wa else 'MISSING'}",
+        )
+
+        # 3. Full grant: DCR → authorize → login(token) → token (PKCE).
+        redirect_uri = "http://localhost/callback"
+        reg = await c.post(
+            "/register",
+            json={"redirect_uris": [redirect_uri], "client_name": "mcp-postgres-selftest"},
+        )
+        if reg.status_code != 201:
+            res.add("oauth-grant-flow", False, f"register failed: {reg.status_code} {reg.text[:120]}")
+            return
+        client = reg.json()
+        cid, csec = client["client_id"], client.get("client_secret")
+
+        verifier = secrets.token_urlsafe(48)
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
+        az = await c.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": redirect_uri,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "selftest",
+            },
+        )
+        if az.status_code != 302 or "rid=" not in az.headers.get("location", ""):
+            res.add("oauth-grant-flow", False, f"authorize did not redirect to login: {az.status_code}")
+            return
+        rid = parse_qs(urlparse(az.headers["location"]).query)["rid"][0]
+
+        # Wrong passphrase must be rejected; the real token must be accepted.
+        bad = await c.post("/login", data={"rid": rid, "passphrase": "definitely-wrong"})
+        approve = await c.post("/login", data={"rid": rid, "passphrase": cfg.token})
+        if bad.status_code == 302 or approve.status_code != 302:
+            res.add(
+                "oauth-grant-flow",
+                False,
+                f"login gate wrong (bad={bad.status_code}, approve={approve.status_code})",
+            )
+            return
+        cb = parse_qs(urlparse(approve.headers["location"]).query)
+        if cb.get("state") != ["selftest"] or "code" not in cb:
+            res.add("oauth-grant-flow", False, f"callback missing code/state: {cb}")
+            return
+
+        tok = await c.post(
+            "/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": cb["code"][0],
+                "redirect_uri": redirect_uri,
+                "client_id": cid,
+                "client_secret": csec,
+                "code_verifier": verifier,
+            },
+        )
+        if tok.status_code != 200 or not tok.json().get("access_token"):
+            res.add("oauth-grant-flow", False, f"token exchange failed: {tok.status_code} {tok.text[:120]}")
+            return
+        access_token = tok.json()["access_token"]
+
+    # 4. The issued token must authorize a real MCP session.
+    url = _endpoint(cfg)
+    try:
+        async with _streamable_client(url, {"Authorization": f"Bearer {access_token}"}) as (
+            read,
+            write,
+            _gid,
+        ):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+        res.add("oauth-grant-flow", True, "DCR -> authorize -> login -> token -> MCP initialize succeeded")
+    except Exception as exc:  # noqa: BLE001
+        res.add("oauth-grant-flow", False, f"issued token failed to authorize MCP: {_explain(exc)}")
+
+
+def _oauth_checks(cfg: Config, res: Result) -> None:
+    """OAuth surface checks, only when the layer is turned on."""
+    if not cfg.oauth.enabled:
+        return
+    if not cfg.oauth.public_url:
+        res.add(
+            "oauth-config",
+            True,
+            "oauth.enabled but public_url unset — server runs static-only (set public_url to enable)",
+            warn=True,
+        )
+        return
+    import anyio
+
+    try:
+        anyio.run(_oauth_flow, cfg, res)
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+
+        res.add("oauth-flow", False, f"OAuth checks errored: {_explain(exc)}", extra=traceback.format_exc())
+
+
 def run_all(cfg: Config, wait: float = 0.0) -> Result:
     import anyio
 
@@ -298,6 +451,7 @@ def run_all(cfg: Config, wait: float = 0.0) -> Result:
     _db_check(cfg, res)
     _allowlist_check(cfg, res)
     anyio.run(_live_checks, cfg, res, wait)
+    _oauth_checks(cfg, res)
     return res
 
 

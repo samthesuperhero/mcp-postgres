@@ -15,3 +15,17 @@ dbname = "__DBNAME__"
 
 [logging]
 level = "__LOGLEVEL__"
+
+# OAuth 2.1 authorization layer (opt-in). Off by default: only the static bearer
+# token in /etc/mcp-postgres/token is accepted. Turn it on to let browser clients
+# such as the claude.ai web connector attach via dynamic client registration +
+# PKCE; the static token keeps working alongside it (dual auth). When enabling,
+# set public_url to the externally reachable HTTPS base that nginx serves (it is
+# advertised to clients as the OAuth issuer/resource, so it can NOT be the
+# 127.0.0.1 bind). The login page uses the bearer token as the approval passphrase.
+[oauth]
+enabled = __OAUTH_ENABLED__
+public_url = "__OAUTH_PUBLIC_URL__"
+access_token_ttl = 3600
+refresh_token_ttl = 2592000
+state_dir = "/var/lib/mcp-postgres"

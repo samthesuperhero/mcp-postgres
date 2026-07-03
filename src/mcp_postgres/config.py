@@ -51,9 +51,32 @@ class LoggingConfig:
 
 
 @dataclass
+class OAuthConfig:
+    """OAuth 2.1 authorization layer (opt-in).
+
+    When ``enabled`` and ``public_url`` is set, the server fronts ``/mcp`` with a
+    standards-compliant OAuth 2.1 Authorization Server + Resource Server (dynamic
+    client registration, PKCE) so browser clients like the claude.ai web connector
+    can attach — while the static bearer token keeps working (dual auth). When
+    disabled (the default), only the static bearer token is accepted, exactly as
+    before. ``public_url`` is the externally reachable HTTPS base (what nginx
+    serves), used as the issuer and to derive the resource identifier
+    ``<public_url><server.path>``; it must be advertised, so it cannot be the
+    internal ``127.0.0.1`` bind.
+    """
+
+    enabled: bool = False
+    public_url: str = ""
+    access_token_ttl: int = 3600  # 1 hour
+    refresh_token_ttl: int = 2592000  # 30 days
+    state_dir: str = "/var/lib/mcp-postgres"
+
+
+@dataclass
 class Config:
     server: ServerConfig
     database: DatabaseConfig
+    oauth: OAuthConfig
     log_level: str = "INFO"
     token: str = ""
     config_dir: Path = DEFAULT_CONFIG_DIR
@@ -68,6 +91,7 @@ SECTION_MODELS: dict[str, type] = {
     "server": ServerConfig,
     "database": DatabaseConfig,
     "logging": LoggingConfig,
+    "oauth": OAuthConfig,
 }
 
 # Keys that are dataclass fields but must NEVER appear in config.toml because
@@ -252,6 +276,7 @@ def load_config(config_dir: Path | None = None) -> Config:
     server = ServerConfig(**_only_known(ServerConfig, data.get("server", {})))
     database = DatabaseConfig(**_only_known(DatabaseConfig, data.get("database", {})))
     logging_cfg = LoggingConfig(**_only_known(LoggingConfig, data.get("logging", {})))
+    oauth = OAuthConfig(**_only_known(OAuthConfig, data.get("oauth", {})))
 
     # The DB password lives ONLY in the secret file (or env), never in config.toml.
     password = _read_secret(config_dir / "secret") or os.environ.get("MCP_PG_DB_PASSWORD", "")
@@ -264,6 +289,7 @@ def load_config(config_dir: Path | None = None) -> Config:
     return Config(
         server=server,
         database=database,
+        oauth=oauth,
         log_level=log_level,
         token=token,
         config_dir=config_dir,

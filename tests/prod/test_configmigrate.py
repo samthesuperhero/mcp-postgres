@@ -28,6 +28,13 @@ dbname = "postgres"
 
 [logging]
 level = "INFO"
+
+[oauth]
+enabled = false
+public_url = ""
+access_token_ttl = 3600
+refresh_token_ttl = 2592000
+state_dir = "/var/lib/mcp-postgres"
 """
 
 

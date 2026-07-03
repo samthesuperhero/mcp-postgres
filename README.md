@@ -132,9 +132,16 @@ dbname = "postgres"
 
 [logging]
 level = "INFO"
+
+[oauth]                 # optional OAuth 2.1 layer (off by default) — see "Connecting
+enabled = false         # the claude.ai web connector" below. The static token keeps
+public_url = ""         # working alongside it. public_url = your public HTTPS base.
+access_token_ttl = 3600
+refresh_token_ttl = 2592000
+state_dir = "/var/lib/mcp-postgres"
 ```
 Edit it directly, or re-run the installer with `--force` to regenerate it from the
-`--bind` / `--port` / `--db-user` / … flags.
+`--bind` / `--port` / `--db-user` / `--enable-oauth` / `--public-url` / … flags.
 
 **Schema changes across versions.** `sudo mcp-postgres/update` **migrates `config.toml` in
 place** to the running version's schema: it writes a timestamped `config.toml.<ts>.bak`, adds
@@ -189,6 +196,46 @@ claude mcp add --transport http postgres http://127.0.0.1:41780/mcp \
 the `Authorization: Bearer <token>` header. Once connected the agent can discover the rest itself —
 the server returns `instructions` on connect and publishes a capability guide; a good first call is
 `get_capabilities`.
+
+### The claude.ai web connector (OAuth)
+
+The claude.ai **web** app authenticates connectors only via **OAuth** — its Advanced settings take
+an OAuth *Client ID / Secret*, with no field for a static bearer header — so the default static-token
+setup can't attach there. Turn on the built-in **OAuth 2.1** layer to connect it. The static token
+keeps working for Claude Code / Desktop (dual auth).
+
+**1. Enable OAuth** — set the public HTTPS base your nginx serves and restart:
+```toml
+# /etc/mcp-postgres/config.toml
+[oauth]
+enabled = true
+public_url = "https://db.example.com"   # advertised to clients — NOT the 127.0.0.1 bind
+```
+```bash
+sudo systemctl restart mcp-postgres
+# or at install time:  sudo mcp-postgres/install --force --enable-oauth --public-url https://db.example.com
+```
+
+**2. Point nginx at the new paths.** OAuth adds root-level routes alongside `/mcp`; the reverse proxy
+must forward all of them to the same `127.0.0.1:41780` upstream:
+```nginx
+location ~ ^/(mcp|authorize|token|register|revoke|login|\.well-known/) {
+    proxy_pass http://127.0.0.1:41780;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;          # keep the long-lived Streamable HTTP responses flowing
+}
+```
+
+**3. Add the connector in claude.ai** — use `https://db.example.com/mcp` as the URL and **leave the
+Client ID and Secret blank** (the server supports dynamic client registration, so claude.ai registers
+itself). When you connect, a **login page** asks for a passphrase: enter the server's **bearer token**
+(`sudo cat /etc/mcp-postgres/token`). That approves the connection and the web chat gains the same
+capability-gated tools.
+
+> Verify the OAuth surface any time with the self-test (it runs a full registration → token → MCP
+> handshake against the local endpoint when `[oauth]` is enabled), or by hand:
+> `curl -s https://db.example.com/.well-known/oauth-protected-resource/mcp`.
 
 ---
 

@@ -7,8 +7,14 @@ ASGI bearer-token middleware, and serves it with uvicorn.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import uvicorn
+from mcp.server.auth.settings import (
+    AuthSettings,
+    ClientRegistrationOptions,
+    RevocationOptions,
+)
 from mcp.server.fastmcp import FastMCP
 
 from .capabilities import enabled_tools_for
@@ -16,6 +22,8 @@ from .config import Config, check_config, load_config
 from .context import AppContext
 from .docs import REPO_URL, SERVER_INSTRUCTIONS
 from .manager import DatabaseManager
+from .oauth import OAuthStore, PostgresOAuthProvider
+from .oauth.login import register_login_routes
 from .privclient import PrivClient
 from .tools import admin, config_files, discovery, introspection, query
 
@@ -53,10 +61,71 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
+def resolve_oauth(cfg: Config) -> tuple[PostgresOAuthProvider | None, AuthSettings | None]:
+    """Build the OAuth provider + settings, or ``(None, None)`` for static-only auth.
+
+    Returns ``(None, None)`` when OAuth is disabled, or when it is enabled but
+    misconfigured (missing/invalid ``public_url``) — in which case we log an error
+    and fall back to static-bearer auth rather than refusing to start.
+    """
+    if not cfg.oauth.enabled:
+        return None, None
+    if not cfg.oauth.public_url:
+        log.error(
+            "oauth.enabled is true but oauth.public_url is unset — "
+            "falling back to static bearer auth (set the public HTTPS base URL to enable OAuth)"
+        )
+        return None, None
+
+    issuer = cfg.oauth.public_url.rstrip("/")
+    try:
+        # Validate the issuer the same way the SDK will when it mounts the routes,
+        # so a bad URL fails here (graceful fallback) instead of crashing startup.
+        from mcp.server.auth.routes import validate_issuer_url
+        from pydantic import AnyHttpUrl
+
+        validate_issuer_url(AnyHttpUrl(issuer))
+        auth_settings = AuthSettings(
+            issuer_url=issuer,
+            resource_server_url=issuer + cfg.server.path,
+            client_registration_options=ClientRegistrationOptions(enabled=True),
+            revocation_options=RevocationOptions(enabled=True),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.error(
+            "oauth.public_url %r is not a valid issuer (%s) — falling back to static bearer auth",
+            cfg.oauth.public_url,
+            exc,
+        )
+        return None, None
+
+    store = OAuthStore(Path(cfg.oauth.state_dir) / "oauth.db")
+    provider = PostgresOAuthProvider(
+        store,
+        static_token=cfg.token,
+        access_token_ttl=cfg.oauth.access_token_ttl,
+        refresh_token_ttl=cfg.oauth.refresh_token_ttl,
+    )
+    log.info(
+        "OAuth 2.1 layer enabled: issuer=%s resource=%s (static bearer token still accepted)",
+        auth_settings.issuer_url,
+        auth_settings.resource_server_url,
+    )
+    return provider, auth_settings
+
+
+def build_server(
+    cfg: Config,
+    oauth_provider: PostgresOAuthProvider | None = None,
+    auth_settings: AuthSettings | None = None,
+) -> tuple[FastMCP, AppContext]:
     priv = PrivClient()
     manager = DatabaseManager(cfg.database, priv)
     ctx = AppContext(config=cfg, manager=manager, priv=priv)
+
+    auth_kwargs = {}
+    if oauth_provider is not None and auth_settings is not None:
+        auth_kwargs = {"auth_server_provider": oauth_provider, "auth": auth_settings}
 
     mcp = FastMCP(
         "mcp-postgres",
@@ -65,6 +134,7 @@ def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
         host=cfg.server.bind,
         port=cfg.server.port,
         streamable_http_path=cfg.server.path,
+        **auth_kwargs,
     )
 
     introspection.register(mcp, ctx)
@@ -72,6 +142,10 @@ def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
     admin.register(mcp, ctx)
     config_files.register(mcp, ctx)
     discovery.register(mcp, ctx)
+
+    # The login page that gates the OAuth /authorize step (unauthenticated route).
+    if oauth_provider is not None:
+        register_login_routes(mcp, oauth_provider, cfg.token)
 
     # Probe the default (initial current) database for the startup capability log.
     current = manager.current_target()
@@ -100,9 +174,14 @@ def main() -> None:
     for line in check_config(cfg.config_dir).messages():
         log.warning("config: %s", line)
 
-    mcp, _ctx = build_server(cfg)
+    oauth_provider, auth_settings = resolve_oauth(cfg)
+    mcp, _ctx = build_server(cfg, oauth_provider, auth_settings)
     app = mcp.streamable_http_app()
-    app.add_middleware(BearerAuthMiddleware, token=cfg.token, protected_path=cfg.server.path)
+    if oauth_provider is None:
+        # Static-bearer mode: guard /mcp ourselves. When OAuth is active the SDK's
+        # RequireAuthMiddleware guards it instead (and honors the static token via
+        # the provider's load_access_token), so this middleware must not be added.
+        app.add_middleware(BearerAuthMiddleware, token=cfg.token, protected_path=cfg.server.path)
 
     log.info("serving MCP on http://%s:%s%s", cfg.server.bind, cfg.server.port, cfg.server.path)
     uvicorn.run(app, host=cfg.server.bind, port=cfg.server.port, log_level=cfg.log_level.lower())

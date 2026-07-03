@@ -36,6 +36,7 @@ HOME_DIR = Path("/opt/mcp-postgres")
 VENV_DIR = HOME_DIR / "venv"
 LIBEXEC_DIR = Path("/usr/libexec/mcp-postgres")
 CONFIG_DIR = Path("/etc/mcp-postgres")
+STATE_DIR = Path("/var/lib/mcp-postgres")
 UNIT_PATH = Path("/usr/lib/systemd/system/mcp-postgres.service")
 SUDOERS_PATH = Path("/etc/sudoers.d/mcp-postgres")
 
@@ -114,6 +115,14 @@ def _chown(path: Path, user: str = SERVICE_USER, group: str | None = None) -> No
 def lay_down_files() -> None:
     for d in (HOME_DIR, LIBEXEC_DIR, CONFIG_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+    # Runtime state dir for the OAuth store (sqlite). systemd's StateDirectory=
+    # also creates/owns this, but create it here so it exists on non-systemd/dev
+    # hosts and re-runs are idempotent. Owned by the service user, mode 0700.
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    _chown(STATE_DIR)
+    os.chmod(STATE_DIR, 0o700)
+    info(f"ensured {STATE_DIR} (0700)")
 
     # privhelper -> /usr/libexec, root-owned, executable.
     dst = LIBEXEC_DIR / "privhelper"
@@ -194,6 +203,8 @@ def write_config(args) -> None:
         .replace("__DBUSER__", args.db_user)
         .replace("__DBNAME__", args.db_name)
         .replace("__LOGLEVEL__", args.log_level)
+        .replace("__OAUTH_ENABLED__", "true" if args.enable_oauth else "false")
+        .replace("__OAUTH_PUBLIC_URL__", args.public_url)
     )
     cfg.write_text(rendered, encoding="utf-8")
     _chown(cfg, "root", SERVICE_USER)
@@ -308,6 +319,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--db-user", default="mcp", help="PostgreSQL role (default mcp)")
     p.add_argument("--db-name", default="postgres", help="default database (default postgres)")
     p.add_argument("--log-level", default="INFO", help="log level (default INFO)")
+    p.add_argument(
+        "--enable-oauth",
+        action="store_true",
+        help="turn on the OAuth 2.1 layer (requires --public-url); the static token still works",
+    )
+    p.add_argument(
+        "--public-url",
+        default="",
+        help="externally reachable HTTPS base for OAuth (e.g. https://db.example.com); "
+        "advertised as the OAuth issuer/resource, so not the 127.0.0.1 bind",
+    )
     p.add_argument("--python", help="python interpreter to build the venv with")
     p.add_argument("--offline-wheels", help="dir of wheels for offline install")
     p.add_argument("--grant-wheel", action="store_true", help="add mcp-postgres to the wheel group")

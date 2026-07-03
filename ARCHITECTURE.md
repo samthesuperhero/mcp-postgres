@@ -36,11 +36,51 @@ do something it currently cannot (and is notified when its rights change at runt
 - **Bind address:** configurable IPv4 + port, default `127.0.0.1:41780`. In the standard
   deployment an **nginx** reverse proxy terminates TLS and forwards to this local upstream;
   remote agents reach the service through nginx, never the app port directly (see §9).
-- **Authentication:** a static **bearer token** (`Authorization: Bearer <token>`) validated by
-  HTTP middleware. The token lives in `/etc/mcp-postgres/token` (mode `0600`).
+- **Authentication:** by default a static **bearer token** (`Authorization: Bearer <token>`)
+  validated by HTTP middleware. The token lives in `/etc/mcp-postgres/token` (mode `0600`).
+  Optionally (§2a) an **OAuth 2.1** layer can be turned on for browser clients that cannot send a
+  static header — the static token keeps working alongside it (dual auth).
 
 The agent-facing API is the MCP tool catalog (§8). No custom REST API is invented — any
 MCP-compatible client (Claude Code, Claude Desktop, etc.) can consume it directly.
+
+<a id="2a"></a>
+### 2a. OAuth 2.1 authorization layer (optional)
+
+The claude.ai **web** connector authenticates MCP servers only via OAuth (its Advanced settings
+expose an OAuth *Client ID / Secret*, with no field for a static bearer header). So a static-token
+server can't attach to the web chat. Turning on `[oauth]` in `config.toml` (with a `public_url`)
+fronts `/mcp` with a standards-compliant **OAuth 2.1 Authorization Server + Resource Server**:
+
+- **Discovery & flow** — the server advertises RFC 8414 authorization-server metadata
+  (`/.well-known/oauth-authorization-server`) and RFC 9728 protected-resource metadata
+  (`/.well-known/oauth-protected-resource/mcp`), supports **dynamic client registration** (RFC 7591,
+  `/register`) so claude.ai self-registers with no manual Client ID/Secret, and runs the
+  **authorization-code + PKCE (S256)** flow (`/authorize`, `/token`, `/revoke`). An unauthenticated
+  request to `/mcp` returns `401` with a `WWW-Authenticate` header pointing at the resource metadata.
+- **Who does what** — the **MCP SDK** (`mcp.server.auth`) provides the route handlers and does all
+  the protocol work (metadata, DCR validation, PKCE verification, redirect-URI matching, code expiry,
+  client authentication). The service supplies only an `OAuthAuthorizationServerProvider`
+  implementation: a **sqlite store** (`oauth/store.py`) that persists registered clients and issued
+  tokens across restarts, token minting (`oauth/provider.py`), and a **login gate**
+  (`oauth/login.py`).
+- **The login gate** — because nginx makes `/authorize` publicly reachable, a browser must prove it
+  is the owner before a token is issued. `/authorize` parks the (SDK-validated) request in memory and
+  redirects the browser to an unauthenticated **`/login`** page; the operator approves by entering the
+  **bearer token as the passphrase** (constant-time compared). Only then is a single-use auth code
+  minted and the browser redirected back to the client. No new secret is introduced.
+- **Dual auth** — the resource-server token check (`load_access_token`) accepts *either* an
+  OAuth-issued access token *or* the static configured token (returning a synthetic full-scope grant
+  for the latter), so Claude Code / Claude Desktop and the self-test keep working unchanged when OAuth
+  is on.
+- **Public URLs** — `oauth.public_url` is the externally reachable HTTPS base (what nginx serves). It
+  is advertised as the issuer and used to derive the resource identifier `<public_url>/mcp`, so it
+  can **not** be the internal `127.0.0.1` bind. nginx must proxy the new root-level paths
+  (`/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/*`) to the same upstream,
+  not just `/mcp`.
+
+When `[oauth]` is disabled (the default), none of this is mounted and the endpoint behaves exactly as
+before — static bearer token only.
 
 **Self-advertisement.** The server describes itself over the standard MCP discovery
 surfaces so an agent needs no prior knowledge (§5a): `instructions` returned at
@@ -273,13 +313,17 @@ it stays safe even when the role could otherwise write.
 ## 9. Security model
 
 - **Secrets** live only under `/etc/mcp-postgres/` with tight modes (`secret`/`token` = `0600`,
-  owned by `mcp-postgres`; `config.toml` = `0640 root:mcp-postgres`). No secret is logged.
+  owned by `mcp-postgres`; `config.toml` = `0640 root:mcp-postgres`). No secret is logged. When OAuth
+  is enabled, issued tokens and registered clients persist in a sqlite store at
+  `/var/lib/mcp-postgres/oauth.db` (mode `0600`, owned by the service user; systemd
+  `StateDirectory=`).
 - **Least privilege by measurement:** the service can only do what the *measured* tiers permit,
   re-checked before every action (§4).
 - **Config writes are doubly constrained** (§6) and always create a timestamped backup.
-- **Transport:** bearer-token auth; bind `127.0.0.1:41780` by default, fronted by an **nginx**
-  reverse proxy that terminates TLS and is the only public entry point (the app port is never
-  exposed directly).
+- **Transport:** bearer-token auth (optionally OAuth 2.1 as well, §2a — the login gate keeps
+  `/authorize` from being an open door, and PKCE binds each code to its client); bind
+  `127.0.0.1:41780` by default, fronted by an **nginx** reverse proxy that terminates TLS and is the
+  only public entry point (the app port is never exposed directly).
 - **systemd hardening:** `User=mcp-postgres`, `ProtectSystem`, `ProtectHome`, journald logging.
   Note: `NoNewPrivileges` must remain **false** — otherwise `sudo`, and therefore config
   editing, would be blocked. This is a deliberate, documented trade-off.

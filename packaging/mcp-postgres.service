@@ -28,7 +28,10 @@ ProtectHome=true
 PrivateTmp=true
 ProtectControlGroups=true
 ProtectKernelTunables=true
-ReadWritePaths=/etc/mcp-postgres
+# Runtime state (the OAuth sqlite store). StateDirectory= creates/owns
+# /var/lib/mcp-postgres for the service user; list it writable too.
+StateDirectory=mcp-postgres
+ReadWritePaths=/etc/mcp-postgres /var/lib/mcp-postgres
 
 [Install]
 WantedBy=multi-user.target
