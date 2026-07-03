@@ -36,6 +36,18 @@ def _explain(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
 
 
+def _is_conn_error(exc: BaseException) -> bool:
+    """True if the failure is a transport-level connect failure (endpoint not
+    listening yet), as opposed to an HTTP/protocol error like a 401. Unwraps
+    ExceptionGroups; name-matches ``httpx.ConnectError`` / ``httpcore.ConnectError``,
+    neither of which subclasses ``OSError``."""
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_conn_error(e) for e in exc.exceptions)
+    if isinstance(exc, (ConnectionError, OSError)):
+        return True
+    return "ConnectError" in type(exc).__name__
+
+
 def _endpoint(cfg: Config) -> str:
     host = cfg.server.bind
     if host in ("0.0.0.0", "::", ""):
@@ -89,7 +101,7 @@ async def _streamable_client(url: str, headers: dict[str, str]):
             yield streams
 
 
-async def _live_checks(cfg: Config, res: Result) -> None:
+async def _live_checks(cfg: Config, res: Result, wait: float = 0.0) -> None:
     try:
         from mcp import ClientSession
     except Exception as exc:  # noqa: BLE001
@@ -97,57 +109,76 @@ async def _live_checks(cfg: Config, res: Result) -> None:
         return
 
     import json
+    import time
     import traceback
+
+    import anyio
 
     url = _endpoint(cfg)
     headers = {"Authorization": f"Bearer {cfg.token}"} if cfg.token else {}
-    try:
-        async with _streamable_client(url, headers) as (read, write, _get_id):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                res.add("mcp-initialize", True, url)
 
-                tools = await session.list_tools()
-                names = sorted(t.name for t in tools.tools)
-                res.add(
-                    "tools-listed",
-                    {"get_capabilities", "health_check", "run_read_query"} <= set(names),
-                    f"{len(names)} tools",
-                    extra="tools: " + ", ".join(names),
-                )
+    # Just after a service restart the process may be running but not yet
+    # listening (uvicorn binds only after imports + capability probing). Retry
+    # the connect/initialize handshake for up to ``wait`` seconds. Only connect
+    # errors before initialize are retried, so no partial results are recorded.
+    deadline = time.monotonic() + max(0.0, wait)
+    while True:
+        started = False
+        try:
+            async with _streamable_client(url, headers) as (read, write, _get_id):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    started = True
+                    res.add("mcp-initialize", True, url)
 
-                caps = _structured(await session.call_tool("get_capabilities", {}))
-                res.add(
-                    "get_capabilities",
-                    bool(caps.get("os_tier") and caps.get("db_tier")),
-                    f"OS={caps.get('os_tier')} DB={caps.get('db_tier')} "
-                    f"role={caps.get('connected_role')} v={caps.get('version')}",
-                    extra=json.dumps(caps, indent=2, default=str),
-                )
-
-                health = _structured(await session.call_tool("health_check", {}))
-                res.add("health_check", bool(health.get("database_connected")), str(health.get("server_version")))
-
-                # Read-only guard: a write inside run_read_query must fail.
-                ro = _structured(
-                    await session.call_tool(
-                        "run_read_query", {"sql": "CREATE TEMP TABLE _mcp_selftest(x int)"}
+                    tools = await session.list_tools()
+                    names = sorted(t.name for t in tools.tools)
+                    res.add(
+                        "tools-listed",
+                        {"get_capabilities", "health_check", "run_read_query"} <= set(names),
+                        f"{len(names)} tools",
+                        extra="tools: " + ", ".join(names),
                     )
+
+                    caps = _structured(await session.call_tool("get_capabilities", {}))
+                    res.add(
+                        "get_capabilities",
+                        bool(caps.get("os_tier") and caps.get("db_tier")),
+                        f"OS={caps.get('os_tier')} DB={caps.get('db_tier')} "
+                        f"role={caps.get('connected_role')} v={caps.get('version')}",
+                        extra=json.dumps(caps, indent=2, default=str),
+                    )
+
+                    health = _structured(await session.call_tool("health_check", {}))
+                    res.add("health_check", bool(health.get("database_connected")), str(health.get("server_version")))
+
+                    # Read-only guard: a write inside run_read_query must fail.
+                    ro = _structured(
+                        await session.call_tool(
+                            "run_read_query", {"sql": "CREATE TEMP TABLE _mcp_selftest(x int)"}
+                        )
+                    )
+                    res.add(
+                        "read-only-guard",
+                        ro.get("ok") is False,
+                        "write correctly rejected" if ro.get("ok") is False else "UNEXPECTEDLY ALLOWED",
+                    )
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not started and _is_conn_error(exc) and time.monotonic() < deadline:
+                await anyio.sleep(0.5)
+                continue
+            detail = _explain(exc)
+            if _is_conn_error(exc) and wait > 0:
+                detail += f" (endpoint still not serving after waiting {wait:.0f}s for startup)"
+            if "401" in detail:
+                detail += (
+                    " — bearer token mismatch: the token the self-test sent does not match the "
+                    "running server's. Check /etc/mcp-postgres/token and restart the service so it "
+                    "reloads the current token."
                 )
-                res.add(
-                    "read-only-guard",
-                    ro.get("ok") is False,
-                    "write correctly rejected" if ro.get("ok") is False else "UNEXPECTEDLY ALLOWED",
-                )
-    except Exception as exc:  # noqa: BLE001
-        detail = _explain(exc)
-        if "401" in detail:
-            detail += (
-                " — bearer token mismatch: the token the self-test sent does not match the "
-                "running server's. Check /etc/mcp-postgres/token and restart the service so it "
-                "reloads the current token."
-            )
-        res.add("mcp-live", False, f"could not reach {url}: {detail}", extra=traceback.format_exc())
+            res.add("mcp-live", False, f"could not reach {url}: {detail}", extra=traceback.format_exc())
+            return
 
 
 def _db_check(cfg: Config, res: Result) -> None:
@@ -201,14 +232,14 @@ def _allowlist_check(cfg: Config, res: Result) -> None:
         res.add("config-allowlist", True, f"skipped ({exc})")
 
 
-def run_all(cfg: Config) -> Result:
+def run_all(cfg: Config, wait: float = 0.0) -> Result:
     import anyio
 
     res = Result()
     _service_check(res)
     _db_check(cfg, res)
     _allowlist_check(cfg, res)
-    anyio.run(_live_checks, cfg, res)
+    anyio.run(_live_checks, cfg, res, wait)
     return res
 
 
@@ -232,7 +263,13 @@ def main() -> None:
         "-q", "--quiet", action="store_true",
         help="terse PASS/FAIL summary only (default: full verbose output)",
     )
-    verbose = not p.parse_args().quiet
+    p.add_argument(
+        "--wait", type=float, default=20.0, metavar="SECONDS",
+        help="seconds to wait for the endpoint to start listening before failing, "
+        "so a self-test right after a restart doesn't race startup (default: 20; 0 to fail fast)",
+    )
+    args = p.parse_args()
+    verbose = not args.quiet
 
     cfg = load_config()
     print("mcp-postgres self-test")
@@ -241,7 +278,7 @@ def main() -> None:
         _print_preamble(cfg)
         print("-" * 60)
 
-    res = run_all(cfg)
+    res = run_all(cfg, wait=args.wait)
     for name, ok, detail in res.checks:
         mark = "PASS" if ok else "FAIL"
         line = f"[{mark}] {name}"
