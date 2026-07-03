@@ -1,5 +1,7 @@
 # mcp-postgres
 
+Repository: <https://github.com/samthesuperhero/mcp-postgres>
+
 An **MCP (Model Context Protocol) server** that gives Claude and other AI agents a safe,
 privilege-aware interface to manage a **PostgreSQL** database on a RHEL-based host.
 
@@ -47,7 +49,7 @@ first — and is idempotent (safe to re-run to upgrade or repair).
 
 ### 1. Get the code (as the privileged user)
 ```bash
-git clone <repo-url> mcp-postgres
+git clone https://github.com/samthesuperhero/mcp-postgres.git
 ```
 
 ### 2. Run the installer

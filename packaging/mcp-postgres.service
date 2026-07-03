@@ -1,6 +1,6 @@
 [Unit]
 Description=mcp-postgres — privilege-aware MCP server for PostgreSQL management
-Documentation=https://modelcontextprotocol.io
+Documentation=https://github.com/samthesuperhero/mcp-postgres
 After=network-online.target postgresql.service
 Wants=network-online.target
 
