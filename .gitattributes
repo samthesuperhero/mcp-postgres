@@ -1,0 +1,23 @@
+# This project is deployed on Linux (systemd unit, sudoers, shell-invoked
+# scripts, Python). All text files MUST use LF line endings, regardless of the
+# committer's OS or global core.autocrlf setting. This also silences the
+# "LF will be replaced by CRLF" warnings on Windows.
+* text=auto eol=lf
+
+# Explicit, for clarity / safety.
+*.py    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.cfg   text eol=lf
+*.txt   text eol=lf
+*.service text eol=lf
+sudoers   text eol=lf
+config.toml.template text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.gz  binary
+*.whl binary
