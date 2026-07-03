@@ -41,60 +41,56 @@ change while running.
 
 ## Deployment
 
-### 1. Create the OS user
+Everything is installed by a single Python script, **`install.py`**, run once by a privileged
+user (root or a sudo-capable admin). It uses only the system `python3` — no packages to install
+first — and is idempotent (safe to re-run to upgrade or repair).
+
+### 1. Get the code (as the privileged user)
 ```bash
-sudo useradd --system --home-dir /opt/mcp-postgres --shell /sbin/nologin mcp-postgres
-# Optional: grant config-editing capability (postgresql.conf / pg_hba.conf).
-# Either full wheel, OR just the scoped sudoers rule the installer drops in (recommended).
-# sudo usermod -aG wheel mcp-postgres
+git clone <repo-url> mcp-postgres
 ```
 
-### 2. Create the PostgreSQL role
+### 2. Run the installer
+```bash
+sudo python3 mcp-postgres/install.py \
+  --bind 127.0.0.1 --port 8080 \
+  --start --run-selftest
+# add --grant-wheel to allow editing postgresql.conf / pg_hba.conf (else config tools stay off)
+```
+You'll be **prompted for the `mcp` DB password** (or set `MCP_PG_DB_PASSWORD`); the bearer token
+is generated automatically (or set `MCP_PG_TOKEN`). The installer then:
+
+- creates the system user `mcp-postgres` (`--grant-wheel` adds it to `wheel`);
+- builds the venv at `/opt/mcp-postgres/venv` and installs the `mcp_postgres` package;
+- installs the `privhelper`, the systemd unit, and a **scoped** `/etc/sudoers.d/mcp-postgres`
+  (allowing `mcp-postgres` to run only the `privhelper` via `sudo`);
+- writes config + secrets under `/etc/mcp-postgres/` with tight permissions;
+- with `--start`, enables and starts the service; with `--run-selftest`, runs the prod checks.
+
+The printed output includes the generated bearer token — save it for step 4.
+
+### 3. Create the PostgreSQL role
+The service connects as role `mcp`. Create it with whatever privileges you intend (read-only,
+read-write, or admin — the service adapts):
 ```bash
 sudo -u postgres psql -c "CREATE ROLE mcp LOGIN PASSWORD 'CHANGE_ME';"
-# Grant whatever privileges you intend (read-only, read-write, or admin) — out of scope here.
 ```
+Or let the installer do it by adding `--create-db-role` in step 2 (requires the running user to
+have `postgres` superuser access).
 
-### 3. Install
-```bash
-sudo ./install.sh
-```
-The installer creates the venv at `/opt/mcp-postgres/venv`, installs the `mcp_postgres`
-package, and lays down: the `privhelper`, the systemd unit, a **scoped** `/etc/sudoers.d/mcp-postgres`
-(allowing `mcp-postgres` to run only the `privhelper` via `sudo`), and template config under
-`/etc/mcp-postgres/`.
-
-### 4. Configure
-Edit `/etc/mcp-postgres/config.toml` (bind address/port, DB name, log level), then set secrets:
-```bash
-# DB password for role "mcp"
-sudo install -m 0600 -o mcp-postgres -g mcp-postgres /dev/stdin /etc/mcp-postgres/secret <<< 'CHANGE_ME'
-# Bearer token agents must present
-sudo install -m 0600 -o mcp-postgres -g mcp-postgres /dev/stdin /etc/mcp-postgres/token <<< "$(openssl rand -hex 32)"
-```
-
-### 5. Start
-```bash
-sudo systemctl enable --now mcp-postgres
-sudo systemctl status mcp-postgres
-```
-
-### 6. Verify (prod self-tests)
-```bash
-sudo -u mcp-postgres /opt/mcp-postgres/venv/bin/mcp-postgres-selftest
-```
-Checks the service is active, the MCP handshake works, DB connectivity, that the reported
-capabilities match reality, and that the config-file allowlist and read-only guard hold.
-
-### 7. Connect an agent
+### 4. Connect an agent
 The server speaks MCP over **Streamable HTTP** at `http://<host>:8080/mcp` (default). Example
 for Claude Code:
 ```bash
 claude mcp add --transport http postgres http://127.0.0.1:8080/mcp \
-  --header "Authorization: Bearer <token-from-step-4>"
+  --header "Authorization: Bearer <token-from-step-2>"
 ```
 For remote access, front it with a TLS-terminating reverse proxy (e.g. nginx) — keep the app
 bound to `127.0.0.1`.
+
+> Re-run the self-tests any time: `sudo -u mcp-postgres /opt/mcp-postgres/venv/bin/mcp-postgres-selftest`
+> — verifies the service is active, the MCP handshake and DB connectivity work, the reported
+> capabilities match reality, and the config-file allowlist and read-only guard hold.
 
 ---
 

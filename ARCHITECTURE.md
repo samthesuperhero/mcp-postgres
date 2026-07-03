@@ -78,9 +78,10 @@ MCP-compatible client (Claude Code, Claude Desktop, etc.) can consume it directl
 | `privclient.py` | Thin wrapper that shells out to `sudo privhelper …`. |
 | `tools/` | MCP tool implementations, grouped and gated by tier. |
 
-**Filesystem layout**
+**Filesystem layout** (all created by the installer, §7a)
 
 ```
+<repo>/install.py                          stdlib-only installer, run once by a privileged user
 /opt/mcp-postgres/venv/                    application venv + mcp_postgres package
 /usr/libexec/mcp-postgres/privhelper       root-owned privileged helper (sudo target)
 /etc/mcp-postgres/config.toml              main config          (0640 root:mcp-postgres)
@@ -227,7 +228,49 @@ it stays safe even when the role could otherwise write.
 
 ---
 
-## 10. Prod-side tests (run on deploy)
+## 10. Installer (`install.py`)
+
+Deployment is driven by a single **stdlib-only** Python script, `install.py`, at the repo root.
+A privileged user (root, or a sudo-capable admin) clones the repo into their home directory and
+runs it once:
+
+```bash
+sudo python3 mcp-postgres/install.py --bind 127.0.0.1 --port 8080 --start --run-selftest
+```
+
+It requires only the system `python3` (no third-party packages before the venv exists) and is
+**idempotent** — safe to re-run to upgrade or repair an install.
+
+**Parameters.** Everything is an `argparse` flag: `--bind`, `--port`, `--db-name`,
+`--db-user` (default `mcp`), `--grant-wheel`, `--python`, `--start`, `--run-selftest`,
+`--create-db-role`. **Secrets are never passed as flags** — the DB password and bearer token
+come from an interactive prompt or an env var (`MCP_PG_DB_PASSWORD`, `MCP_PG_TOKEN`); the token
+is auto-generated if not supplied.
+
+<a id="7a"></a>**Steps** (in order):
+
+1. **Preflight** — assert `euid == 0`; confirm RHEL-family + `systemd`; confirm `python3 >= 3.11`;
+   best-effort check that PostgreSQL answers at `127.0.0.1:5432` (warn, don't fail).
+2. **OS user** — create system user `mcp-postgres`
+   (`useradd --system --home-dir /opt/mcp-postgres --shell /sbin/nologin`) if missing; with
+   `--grant-wheel`, add it to `wheel`.
+3. **Files** — create dirs and copy: the `mcp_postgres` package, `privhelper`
+   (→ `/usr/libexec/mcp-postgres/`, `root:root 0755`), the systemd unit
+   (→ `/usr/lib/systemd/system/`), and the scoped sudoers drop-in
+   (→ `/etc/sudoers.d/mcp-postgres`, **validated with `visudo -cf` before install**).
+4. **venv** — create `/opt/mcp-postgres/venv` and `pip install` the package (bundled offline
+   wheels if present, else PyPI).
+5. **Config & secrets** — write `/etc/mcp-postgres/config.toml` from the flags; write `secret`
+   and `token` (`0600`, owned by `mcp-postgres`); `config.toml` is `0640 root:mcp-postgres`.
+6. **Optional `--create-db-role`** — connect as the `postgres` superuser and
+   `CREATE ROLE mcp LOGIN PASSWORD …` (for operators who have that access; otherwise the role is
+   a manual DBA step).
+7. **Activate** — `systemctl daemon-reload`; with `--start`, `systemctl enable --now`; with
+   `--run-selftest`, run the prod self-test suite (§11) and print the result.
+
+---
+
+## 11. Prod-side tests (run on deploy)
 
 A `pytest` suite under `tests/prod/`, exposed as a `mcp-postgres-selftest` entrypoint, is run
 immediately after `systemctl enable --now`. It validates:
