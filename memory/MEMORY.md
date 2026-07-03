@@ -1,2 +1,4 @@
 - [No CRLF/LF warnings](no-crlf-lf-warnings.md) — pin LF via .gitattributes; the "LF will be replaced by CRLF" warning must never appear
-- [Never commit without approval](never-commit-without-approval.md) — no git commit/push until the user explicitly approves each one
+- [Default endpoint](default-endpoint.md) — service defaults to 127.0.0.1:41780 (/mcp), behind an nginx reverse proxy; not 8080
+- [Sync memory into repo](sync-memory-into-repo.md) — always mirror memory into the repo's memory/ dir in the same commit; never ask
+- [Never commit without approval](never-commit-without-approval.md) — commit only on explicit per-commit approval; never push (user always pushes manually) — don't even offer
