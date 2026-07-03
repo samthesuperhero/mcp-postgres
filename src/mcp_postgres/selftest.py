@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 
 from .config import Config, load_config
 
@@ -48,13 +49,38 @@ def _structured(call_result):
     return {}
 
 
+@asynccontextmanager
+async def _streamable_client(url: str, headers: dict[str, str]):
+    """Open a StreamableHTTP client transport across MCP SDK versions.
+
+    Newer SDKs renamed the factory ``streamablehttp_client`` -> ``streamable_http_client``
+    and dropped its ``headers`` kwarg — auth headers now live on a pre-built
+    ``httpx.AsyncClient`` passed via ``http_client=``. Older SDKs still take
+    ``streamablehttp_client(url, headers=...)``. Support both.
+    """
+    from mcp.client import streamable_http as _sh
+
+    new_factory = getattr(_sh, "streamable_http_client", None)
+    if new_factory is None:
+        async with _sh.streamablehttp_client(url, headers=headers) as streams:
+            yield streams
+        return
+
+    make_client = getattr(_sh, "create_mcp_http_client", None)
+    if make_client is not None:
+        client = make_client(headers=headers)  # applies MCP-recommended timeouts
+    else:
+        import httpx
+
+        client = httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(30.0, read=300.0))
+    async with client:
+        async with new_factory(url, http_client=client) as streams:
+            yield streams
+
+
 async def _live_checks(cfg: Config, res: Result) -> None:
     try:
         from mcp import ClientSession
-        from mcp.client import streamable_http as _sh
-
-        # The client factory was renamed streamablehttp_client -> streamable_http_client.
-        streamablehttp_client = getattr(_sh, "streamable_http_client", None) or _sh.streamablehttp_client
     except Exception as exc:  # noqa: BLE001
         res.add("mcp-client-import", False, str(exc))
         return
@@ -62,7 +88,7 @@ async def _live_checks(cfg: Config, res: Result) -> None:
     url = _endpoint(cfg)
     headers = {"Authorization": f"Bearer {cfg.token}"} if cfg.token else {}
     try:
-        async with streamablehttp_client(url, headers=headers) as (read, write, _get_id):
+        async with _streamable_client(url, headers) as (read, write, _get_id):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 res.add("mcp-initialize", True, url)
