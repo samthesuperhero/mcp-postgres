@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .capabilities import CapabilityManager
 from .config import Config
-from .db import Database
+from .manager import DatabaseManager
 from .privclient import PrivClient
 
 
 @dataclass
 class AppContext:
     config: Config
-    db: Database
-    caps: CapabilityManager
+    manager: DatabaseManager
     priv: PrivClient
-    enabled_tools: list[str] = field(default_factory=list)

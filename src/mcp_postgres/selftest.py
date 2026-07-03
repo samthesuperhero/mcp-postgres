@@ -136,7 +136,8 @@ async def _live_checks(cfg: Config, res: Result, wait: float = 0.0) -> None:
                     names = sorted(t.name for t in tools.tools)
                     res.add(
                         "tools-listed",
-                        {"get_capabilities", "health_check", "run_read_query"} <= set(names),
+                        {"get_capabilities", "health_check", "run_read_query", "use_database"}
+                        <= set(names),
                         f"{len(names)} tools",
                         extra="tools: " + ", ".join(names),
                     )
@@ -146,12 +147,32 @@ async def _live_checks(cfg: Config, res: Result, wait: float = 0.0) -> None:
                         "get_capabilities",
                         bool(caps.get("os_tier") and caps.get("db_tier")),
                         f"OS={caps.get('os_tier')} DB={caps.get('db_tier')} "
-                        f"role={caps.get('connected_role')} v={caps.get('version')}",
+                        f"db={caps.get('database')} role={caps.get('connected_role')} v={caps.get('version')}",
                         extra=json.dumps(caps, indent=2, default=str),
+                    )
+                    # Every envelope must name the current target database.
+                    res.add(
+                        "result-database-field",
+                        caps.get("database") == cfg.database.dbname,
+                        f"reported database={caps.get('database')!r} (default {cfg.database.dbname!r})",
                     )
 
                     health = _structured(await session.call_tool("health_check", {}))
                     res.add("health_check", bool(health.get("database_connected")), str(health.get("server_version")))
+
+                    # Multi-DB: switching to the (always-reachable) default DB must
+                    # succeed and report that database back.
+                    switched = _structured(
+                        await session.call_tool("use_database", {"name": cfg.database.dbname})
+                    )
+                    res.add(
+                        "use_database",
+                        switched.get("ok") is True
+                        and switched.get("database") == cfg.database.dbname,
+                        f"switched to {switched.get('database')!r}"
+                        if switched.get("ok")
+                        else f"switch failed: {switched.get('error')}",
+                    )
 
                     # Read-only guard: a write inside run_read_query must fail.
                     ro = _structured(

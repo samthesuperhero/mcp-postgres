@@ -45,6 +45,40 @@ class CapabilityError(Exception):
         self.notices = notices or []
 
 
+def enabled_tools_for(os_tier: OsTier, db_tier: DbTier) -> list[str]:
+    """The tools advertised as usable at the given tiers.
+
+    Single source of truth for the ``enabled_tools`` set: every tool is always
+    *registered*, but only the ones returned here are advertised as callable right
+    now. Because the DB tier is measured per database, this is recomputed against
+    the current target on every report — a `use_database` switch can change it.
+    """
+    tools = [
+        "get_capabilities",
+        "health_check",
+        "use_database",
+        "list_databases",
+        "list_schemas",
+        "list_tables",
+        "describe_table",
+        "run_read_query",
+    ]
+    if db_tier >= DbTier.DB_READWRITE:
+        tools.append("execute_sql")
+    if db_tier >= DbTier.DB_ADMIN:
+        tools += ["create_database", "create_role", "grant", "revoke", "admin_sql"]
+    if os_tier >= OsTier.OS_CONFIG:
+        tools += [
+            "read_postgresql_conf",
+            "read_pg_hba_conf",
+            "update_postgresql_setting",
+            "update_pg_hba_rule",
+        ]
+    if os_tier >= OsTier.OS_CONFIG or db_tier >= DbTier.DB_ADMIN:
+        tools.append("reload_postgresql")
+    return sorted(tools)
+
+
 class CapabilityManager:
     def __init__(self, db, priv, cache_ttl: float = 5.0):
         self.db = db
@@ -157,12 +191,13 @@ class CapabilityManager:
 
     # -- report ---------------------------------------------------------------
 
-    def report(self, enabled_tools: list[str]) -> dict:
+    def report(self, database: str | None = None) -> dict:
         os_t = self.os_tier(force=True)
         info = self.db_info(force=True)
         return {
             "service": "mcp-postgres",
             "version": version(),
+            "database": database,
             "os_tier": os_t.name,
             "db_tier": info["tier"].name,
             "connected_role": info["role"],
@@ -170,6 +205,6 @@ class CapabilityManager:
             "config_file": info["config_file"],
             "hba_file": info["hba_file"],
             "database_error": info["error"],
-            "enabled_tools": sorted(enabled_tools),
+            "enabled_tools": enabled_tools_for(os_t, info["tier"]),
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -29,23 +29,33 @@ def version() -> str | None:
 
 
 SERVER_INSTRUCTIONS = f"""\
-mcp-postgres is a privilege-aware MCP server for managing one PostgreSQL database
-on the local host (role `mcp` over 127.0.0.1:5432).
+mcp-postgres is a privilege-aware MCP server for managing PostgreSQL on the local
+host (role `mcp` over 127.0.0.1:5432). Role `mcp` is cluster-global, so you can act
+on ANY database in the cluster it can connect to — not just one.
 
 START HERE
 - Call `get_capabilities` (or read the `{CAPABILITIES_URI}` resource) before acting.
-  It reports the current privilege tiers and the exact `enabled_tools` you may use
-  right now. For the full catalog and semantics, read `{GUIDE_URI}`.
+  It reports the current target database, the privilege tiers, and the exact
+  `enabled_tools` you may use right now. For the full catalog and semantics, read `{GUIDE_URI}`.
+
+CHOOSING A DATABASE
+- Everything acts on the current target database (`database` in every result).
+- `list_databases` lists the databases you can target; `use_database(name)` switches
+  the current target (session-wide) and returns the capability report for it. The DB
+  tier is measured per database, so it may change when you switch. On a bad name the
+  current target is left unchanged.
 
 PRIVILEGE TIERS (what the service is allowed to do is *measured*, not assumed)
-- DB tier:  DB_READONLY < DB_READWRITE < DB_ADMIN  (privileges of role `mcp`)
+- DB tier:  DB_READONLY < DB_READWRITE < DB_ADMIN  (privileges of role `mcp` in the
+  current database)
 - OS tier:  OS_NONE < OS_CONFIG  (whether the service may edit postgresql.conf /
-  pg_hba.conf and reload PostgreSQL via sudo)
+  pg_hba.conf and reload PostgreSQL via sudo — cluster-global, not per database)
 Tiers are re-checked before EVERY call. A tool may be advertised but still refuse
 if the required tier is not currently held — PostgreSQL remains the final authority.
 
 RESULT ENVELOPE (every tool returns a JSON object)
 - `ok`: true on success, false on refusal or error.
+- `database`: the current target database this result came from.
 - `error`: present when `ok` is false (e.g. insufficient tier, or a SQL error).
 - `capability_changed`: present on any result when your privileges shifted since the
   last call (e.g. "DB tier changed DB_READONLY -> DB_READWRITE"); use it to re-read
@@ -65,16 +75,28 @@ GUIDE_MARKDOWN = f"""\
 # mcp-postgres — capability guide
 
 A privilege-aware [MCP](https://modelcontextprotocol.io) server that lets an AI agent
-introspect and manage **one local PostgreSQL database** (role `mcp`, `127.0.0.1:5432`).
-Source: <{REPO_URL}>.
+introspect and manage **the local PostgreSQL cluster** (role `mcp`, `127.0.0.1:5432`) —
+**any database** role `mcp` can connect to, one at a time. Source: <{REPO_URL}>.
 
 ## How to use it
 
 1. Call **`get_capabilities`** first (or read the `{CAPABILITIES_URI}` resource). It
-   returns the live OS/DB tiers, the connected role and its attributes, and the exact
-   **`enabled_tools`** you may use right now.
+   returns the current target **`database`**, the live OS/DB tiers, the connected role
+   and its attributes, and the exact **`enabled_tools`** you may use right now.
 2. Call tools from that list. Every tool re-checks its required tier immediately before
    acting, so a tool that is advertised may still refuse if your rights changed.
+
+## Choosing the target database
+
+Role `mcp` is a cluster-global PostgreSQL role, so the service can act on any database
+in the cluster it may `CONNECT` to (only the database name varies — host, port, and
+credentials are fixed by the deployment). All tools operate on a session-wide **current
+target database**, reported as `database` in every result.
+
+- **`list_databases`** — the databases you can target.
+- **`use_database(name)`** — switch the current target; returns that database's capability
+  report. The **DB tier is measured per database**, so it can differ after a switch; a
+  bad or unreachable name leaves the current target unchanged.
 
 ## Privilege tiers
 
@@ -82,7 +104,7 @@ The service **measures** what it may do, on two independent axes:
 
 | Axis | Tiers (low → high) | Meaning |
 |------|--------------------|---------|
-| DB   | `DB_READONLY` → `DB_READWRITE` → `DB_ADMIN` | privileges of role `mcp` inside PostgreSQL |
+| DB   | `DB_READONLY` → `DB_READWRITE` → `DB_ADMIN` | privileges of role `mcp` in the current database |
 | OS   | `OS_NONE` → `OS_CONFIG` | may the service edit `postgresql.conf`/`pg_hba.conf` and reload, via sudo |
 
 Tiers are re-checked before every action; if they change mid-session, the affected tool
@@ -93,6 +115,7 @@ response carries a `capability_changed` notice.
 Every tool returns a JSON object:
 
 - `ok` — `true` on success, `false` on refusal/error.
+- `database` — the current target database the result came from.
 - `error` — a message when `ok` is `false` (insufficient tier, SQL error, …).
 - `capability_changed` — a list of change notices, present on any result when your
   privileges shifted since the previous call.
@@ -100,9 +123,13 @@ Every tool returns a JSON object:
 ## Tool catalog (capability-gated)
 
 ### Always available
-- `get_capabilities` — full capability report (tiers, role, enabled tools, timestamp).
-- `health_check` — service up and PostgreSQL reachable.
-- `list_databases`, `list_schemas`, `list_tables`, `describe_table` — read-only introspection.
+- `get_capabilities` — full capability report (current database, tiers, role, enabled
+  tools, timestamp).
+- `health_check` — service up and the current database reachable.
+- `use_database` — switch the current target database (same cluster, role `mcp`); returns
+  the new database's capability report.
+- `list_databases`, `list_schemas`, `list_tables`, `describe_table` — read-only introspection
+  (`list_databases` also enumerates the names `use_database` accepts).
 - `run_read_query` — run a `SELECT`/read in a forced **READ ONLY** transaction (safe even
   when role `mcp` can write).
 

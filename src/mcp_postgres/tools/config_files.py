@@ -21,15 +21,19 @@ _WRITE = ToolAnnotations(
 )
 
 
-def _reload_postgres(ctx) -> tuple[bool, str | None]:
-    """Try to reload PostgreSQL: privhelper first, then pg_reload_conf() if admin."""
+def _reload_postgres(ctx, target) -> tuple[bool, str | None]:
+    """Try to reload PostgreSQL: privhelper first, then pg_reload_conf() if admin.
+
+    The SQL fallback runs against ``target`` (the current database); config is
+    cluster-global, so any connection with DB_ADMIN can issue the reload.
+    """
     try:
         ctx.priv.reload()
         return True, None
     except Exception as exc:  # noqa: BLE001
-        if ctx.caps.db_tier() >= DbTier.DB_ADMIN:
+        if target.caps.db_tier() >= DbTier.DB_ADMIN:
             try:
-                ctx.db.query_scalar("SELECT pg_reload_conf()")
+                target.db.query_scalar("SELECT pg_reload_conf()")
                 return True, None
             except Exception as exc2:  # noqa: BLE001
                 return False, str(exc2)
@@ -37,33 +41,37 @@ def _reload_postgres(ctx) -> tuple[bool, str | None]:
 
 
 def register(mcp, ctx) -> None:
-    caps = ctx.caps
-    db = ctx.db
     priv = ctx.priv
 
     @mcp.tool(title="Read postgresql.conf", annotations=_READ_ONLY)
     def read_postgresql_conf() -> dict:
         """Read the contents of postgresql.conf. Requires OS_CONFIG."""
-        allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
+        target = ctx.manager.current_target()
+        allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
         try:
             content = priv.read("postgresql.conf")
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "file": "postgresql.conf", "content": content}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
+        return attach(
+            {"ok": True, "file": "postgresql.conf", "content": content}, info, database=target.dbname
+        )
 
     @mcp.tool(title="Read pg_hba.conf", annotations=_READ_ONLY)
     def read_pg_hba_conf() -> dict:
         """Read the contents of pg_hba.conf. Requires OS_CONFIG."""
-        allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
+        target = ctx.manager.current_target()
+        allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
         try:
             content = priv.read("pg_hba.conf")
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "file": "pg_hba.conf", "content": content}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
+        return attach(
+            {"ok": True, "file": "pg_hba.conf", "content": content}, info, database=target.dbname
+        )
 
     @mcp.tool(title="Update postgresql.conf setting", annotations=_WRITE)
     def update_postgresql_setting(name: str, value: str, reload: str = "auto") -> dict:
@@ -72,7 +80,8 @@ def register(mcp, ctx) -> None:
         ``reload`` is one of ``auto`` (reload on change unless a restart is
         required), ``true``, or ``false``. Requires OS_CONFIG.
         """
-        allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
+        target = ctx.manager.current_target()
+        allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
         try:
@@ -81,16 +90,16 @@ def register(mcp, ctx) -> None:
             if changed:
                 priv.write("postgresql.conf", new_content)
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
 
-        row = db.query_one("SELECT context FROM pg_settings WHERE name = %s", (name,))
+        row = target.db.query_one("SELECT context FROM pg_settings WHERE name = %s", (name,))
         context = row["context"] if row else None
         restart_required = context == "postmaster"
 
         reloaded, reload_error = False, None
         want_reload = str(reload).lower() in ("auto", "true", "1", "yes")
         if changed and want_reload and not restart_required:
-            reloaded, reload_error = _reload_postgres(ctx)
+            reloaded, reload_error = _reload_postgres(ctx, target)
 
         result = {
             "ok": True,
@@ -110,7 +119,7 @@ def register(mcp, ctx) -> None:
                 "This setting requires a full PostgreSQL restart; the service does "
                 "not restart PostgreSQL automatically."
             )
-        return attach(result, info)
+        return attach(result, info, database=target.dbname)
 
     @mcp.tool(title="Append pg_hba.conf rule", annotations=_WRITE)
     def update_pg_hba_rule(rule: str, reload: str = "auto") -> dict:
@@ -118,7 +127,8 @@ def register(mcp, ctx) -> None:
 
         Example rule: ``host mydb myuser 127.0.0.1/32 scram-sha-256``.
         """
-        allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
+        target = ctx.manager.current_target()
+        allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
         try:
@@ -127,12 +137,12 @@ def register(mcp, ctx) -> None:
             if changed:
                 priv.write("pg_hba.conf", new_content)
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
 
         reloaded, reload_error = False, None
         want_reload = str(reload).lower() in ("auto", "true", "1", "yes")
         if changed and want_reload:
-            reloaded, reload_error = _reload_postgres(ctx)
+            reloaded, reload_error = _reload_postgres(ctx, target)
 
         result = {
             "ok": True,
@@ -143,28 +153,20 @@ def register(mcp, ctx) -> None:
         }
         if reload_error:
             result["reload_error"] = reload_error
-        return attach(result, info)
+        return attach(result, info, database=target.dbname)
 
     @mcp.tool(title="Reload PostgreSQL config", annotations=_WRITE)
     def reload_postgresql() -> dict:
         """Reload PostgreSQL configuration. Requires OS_CONFIG or DB_ADMIN."""
+        target = ctx.manager.current_target()
+        caps = target.caps
         # Allowed if we can reload via sudo OR via SQL as an admin role.
         if caps.os_tier() < OsTier.OS_CONFIG and caps.db_tier() < DbTier.DB_ADMIN:
-            allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG)
+            _allowed, info = guard_or_error(caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
             return info  # will be the refusal dict
         notices = caps.guard()
-        reloaded, reload_error = _reload_postgres(ctx)
+        reloaded, reload_error = _reload_postgres(ctx, target)
         result = {"ok": reloaded, "reloaded": reloaded}
         if reload_error:
             result["error"] = reload_error
-        return attach(result, notices)
-
-    if caps.os_tier() >= OsTier.OS_CONFIG:
-        ctx.enabled_tools += [
-            "read_postgresql_conf",
-            "read_pg_hba_conf",
-            "update_postgresql_setting",
-            "update_pg_hba_rule",
-        ]
-    if caps.os_tier() >= OsTier.OS_CONFIG or caps.db_tier() >= DbTier.DB_ADMIN:
-        ctx.enabled_tools.append("reload_postgresql")
+        return attach(result, notices, database=target.dbname)

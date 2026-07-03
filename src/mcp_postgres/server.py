@@ -11,11 +11,11 @@ import logging
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 
-from .capabilities import CapabilityManager
+from .capabilities import enabled_tools_for
 from .config import Config, check_config, load_config
 from .context import AppContext
-from .db import Database
 from .docs import REPO_URL, SERVER_INSTRUCTIONS
+from .manager import DatabaseManager
 from .privclient import PrivClient
 from .tools import admin, config_files, discovery, introspection, query
 
@@ -54,11 +54,9 @@ class BearerAuthMiddleware:
 
 
 def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
-    db = Database(cfg.database)
-    db.open()
     priv = PrivClient()
-    caps = CapabilityManager(db, priv)
-    ctx = AppContext(config=cfg, db=db, caps=caps, priv=priv)
+    manager = DatabaseManager(cfg.database, priv)
+    ctx = AppContext(config=cfg, manager=manager, priv=priv)
 
     mcp = FastMCP(
         "mcp-postgres",
@@ -75,11 +73,15 @@ def build_server(cfg: Config) -> tuple[FastMCP, AppContext]:
     config_files.register(mcp, ctx)
     discovery.register(mcp, ctx)
 
+    # Probe the default (initial current) database for the startup capability log.
+    current = manager.current_target()
+    os_t, db_t = current.caps.os_tier(), current.caps.db_tier()
     log.info(
-        "capabilities at startup: OS=%s DB=%s; enabled tools: %s",
-        caps.os_tier().name,
-        caps.db_tier().name,
-        ", ".join(sorted(ctx.enabled_tools)),
+        "capabilities at startup: db=%s OS=%s DB=%s; enabled tools: %s",
+        current.dbname,
+        os_t.name,
+        db_t.name,
+        ", ".join(enabled_tools_for(os_t, db_t)),
     )
     return mcp, ctx
 

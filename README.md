@@ -11,6 +11,11 @@ checking both its OS rights (sudo/wheel) and the DB privileges of role `mcp`, an
 those capabilities back to the agent. With sudo it may edit exactly two files —
 `postgresql.conf` and `pg_hba.conf` — and reload PostgreSQL.
 
+Role `mcp` is a cluster-global PostgreSQL role, so the agent can work with **any database in
+the cluster** it can connect to — not just one. Tools act on a session-wide *current* database;
+the agent switches it with `use_database` (and lists candidates with `list_databases`). Every
+result names the `database` it came from.
+
 > Design details are in **[ARCHITECTURE.md](./ARCHITECTURE.md)**. This README is the deployment
 > runbook.
 
@@ -20,8 +25,8 @@ those capabilities back to the agent. With sudo it may edit exactly two files �
 
 Tools are **capability-gated** — the agent sees only what the current privileges allow:
 
-- **Always:** inspect databases/schemas/tables, run read-only `SELECT` queries, and read the
-  live capability report.
+- **Always:** pick the target database (`use_database`), inspect databases/schemas/tables, run
+  read-only `SELECT` queries, and read the live capability report.
 - **If role `mcp` can write:** run DML/DDL.
 - **If role `mcp` is admin:** manage roles and databases.
 - **If `mcp-postgres` has sudo:** read/edit `postgresql.conf` & `pg_hba.conf` and reload

@@ -17,8 +17,6 @@ from ..docs import CAPABILITIES_URI, GUIDE_MARKDOWN, GUIDE_URI
 
 
 def register(mcp, ctx) -> None:
-    caps = ctx.caps
-
     @mcp.resource(
         GUIDE_URI,
         name="mcp-postgres guide",
@@ -37,4 +35,5 @@ def register(mcp, ctx) -> None:
         mime_type="application/json",
     )
     def current_capabilities() -> str:
-        return json.dumps(caps.report(ctx.enabled_tools), indent=2)
+        t = ctx.manager.current_target()
+        return json.dumps(t.caps.report(database=t.dbname), indent=2)

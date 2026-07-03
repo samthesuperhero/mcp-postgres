@@ -80,7 +80,8 @@ titles, and two **resources** — `docs://mcp-postgres/guide` (the capability gu
 |--------|----------------|
 | `server.py` | Builds the MCP server (FastMCP), applies bearer-token middleware, registers tools per current capability tiers, runs Streamable HTTP. |
 | `config.py` | Loads `/etc/mcp-postgres/config.toml`, the DB `secret`, and the auth `token`. |
-| `db.py` | `psycopg` v3 connection pool to `127.0.0.1:5432` as role `mcp`. |
+| `db.py` | `psycopg` v3 connection pool to `127.0.0.1:5432` as role `mcp` (one pool per target database). |
+| `manager.py` | Registry of per-database targets (§4a): one `Database` pool + one `CapabilityManager` per database, plus the session-wide *current* target that `use_database` switches. |
 | `capabilities.py` | The self-check engine: OS tier + DB tier probes, the capability report, and the per-action `guard`. |
 | `privclient.py` | Thin wrapper that shells out to `sudo privhelper …`. |
 | `tools/` | MCP tool implementations, grouped and gated by tier. |
@@ -141,15 +142,42 @@ that a given tool needs *immediately before executing it*:
 
 This guarantees the agent's view of its own privileges is never stale.
 
+<a id="4a"></a>
+
+### 4a. Target database selection
+
+Role `mcp` is a **cluster-global** PostgreSQL role: the same credentials
+(`host`/`port`/`user`/`password`, fixed by config) reach every database in the local cluster
+role `mcp` can `CONNECT` to; only the database *name* varies. The service exposes this as a
+session-wide **current target database** rather than the single startup database:
+
+- `manager.py`'s `DatabaseManager` holds the base connection config and lazily builds one
+  `Database` pool **and one `CapabilityManager` per database**, cached by name (`min_size=0`
+  keeps idle pools cheap). The initial current target is `database.dbname` from config.
+- **`use_database(name)`** switches the current target. It force-probes the new database first;
+  on a connection/permission failure it discards that pool and **leaves the current target
+  unchanged**, so a bad name never strands the session. On success it returns that database's
+  capability report.
+- **The DB tier is measured per database** (e.g. `CREATE` on `public` differs by database), so a
+  switch can change the enabled-tool set — which is why each target owns its own
+  `CapabilityManager`. The **OS tier is process-global** (the privhelper is not per database) and
+  is shared across targets.
+- Every tool result carries the current **`database`** so the agent is never in doubt which
+  target it acted on; `list_databases` enumerates the names `use_database` accepts.
+
+The current target is process-global (one bearer token → one agent), which suits this
+single-tenant deployment; scoping it per MCP session is a possible future refinement.
+
 ---
 
 ## 5. Capability report
 
 The report is exposed to the agent in two complementary ways:
 
-1. **`get_capabilities` tool** returns the full structured report: OS tier, DB tier, connected
-   role name & attributes, discovered `config_file`/`hba_file` paths, the **`enabled_tools`**
-   list (exactly the tools the current tiers permit), any DB error, and a timestamp.
+1. **`get_capabilities` tool** returns the full structured report: the current target
+   `database` (§4a), OS tier, DB tier, connected role name & attributes, discovered
+   `config_file`/`hba_file` paths, the **`enabled_tools`** list (exactly the tools the current
+   tiers permit for that database), any DB error, and a timestamp.
 2. **The guard on every gated tool.** All tools are registered so a privilege *gained* mid-session
    is immediately usable without a restart, but each gated tool re-checks its required tier on
    every call (§4) and refuses — with a clear, machine-readable reason plus any

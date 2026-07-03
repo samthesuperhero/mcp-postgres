@@ -11,7 +11,7 @@ import asyncio
 from mcp.server.fastmcp import FastMCP
 
 from mcp_postgres import docs
-from mcp_postgres.capabilities import DbTier, OsTier
+from mcp_postgres.capabilities import DbTier, OsTier, enabled_tools_for
 from mcp_postgres.tools import admin, config_files, discovery, introspection, query
 
 
@@ -22,16 +22,38 @@ class _StubCaps:
     def os_tier(self, force=False):
         return OsTier.OS_NONE
 
-    def report(self, enabled_tools):
-        return {"service": "mcp-postgres", "enabled_tools": sorted(enabled_tools)}
+    def report(self, database=None):
+        return {
+            "service": "mcp-postgres",
+            "database": database,
+            "enabled_tools": enabled_tools_for(OsTier.OS_NONE, DbTier.DB_READONLY),
+        }
+
+
+class _StubTarget:
+    dbname = "postgres"
+
+    def __init__(self):
+        self.caps = _StubCaps()
+        self.db = None
+
+
+class _StubManager:
+    def __init__(self):
+        self._target = _StubTarget()
+        self.current = "postgres"
+
+    def current_target(self):
+        return self._target
+
+    def use(self, name):
+        return self._target
 
 
 class _StubCtx:
     def __init__(self):
-        self.caps = _StubCaps()
-        self.db = None
+        self.manager = _StubManager()
         self.priv = None
-        self.enabled_tools = []
 
 
 def _build() -> FastMCP:
@@ -44,6 +66,7 @@ def _build() -> FastMCP:
 
 READ_ONLY = {
     "get_capabilities",
+    "use_database",
     "health_check",
     "list_databases",
     "list_schemas",

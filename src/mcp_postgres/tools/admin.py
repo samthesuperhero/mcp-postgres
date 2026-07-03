@@ -15,9 +15,6 @@ from .base import attach, guard_or_error
 
 
 def register(mcp, ctx) -> None:
-    caps = ctx.caps
-    db = ctx.db
-
     @mcp.tool(
         title="Create database",
         annotations=ToolAnnotations(
@@ -26,17 +23,18 @@ def register(mcp, ctx) -> None:
     )
     def create_database(name: str, owner: str | None = None) -> dict:
         """Create a database, optionally owned by a role. Requires DB_ADMIN."""
-        allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
+        t = ctx.manager.current_target()
+        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:
             return info
         stmt = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
         if owner:
             stmt = stmt + sql.SQL(" OWNER {}").format(sql.Identifier(owner))
         try:
-            db.execute(stmt)
+            t.db.execute(stmt)
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "database": name, "owner": owner}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=t.dbname)
+        return attach({"ok": True, "created_database": name, "owner": owner}, info, database=t.dbname)
 
     @mcp.tool(
         title="Create role",
@@ -52,7 +50,8 @@ def register(mcp, ctx) -> None:
         createrole: bool = False,
     ) -> dict:
         """Create a role. Requires DB_ADMIN."""
-        allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
+        t = ctx.manager.current_target()
+        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:
             return info
         opts = [sql.SQL("LOGIN" if login else "NOLOGIN")]
@@ -66,10 +65,10 @@ def register(mcp, ctx) -> None:
         if password:
             stmt = stmt + sql.SQL(" PASSWORD {}").format(sql.Literal(password))
         try:
-            db.execute(stmt)
+            t.db.execute(stmt)
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "role": name}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=t.dbname)
+        return attach({"ok": True, "role": name}, info, database=t.dbname)
 
     @mcp.tool(
         title="Grant privileges",
@@ -79,14 +78,19 @@ def register(mcp, ctx) -> None:
     )
     def grant(privileges: str, on_object: str, to_role: str) -> dict:
         """Run GRANT <privileges> ON <on_object> TO <role>. Requires DB_ADMIN."""
-        allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
+        t = ctx.manager.current_target()
+        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:
             return info
         try:
-            db.execute(f"GRANT {privileges} ON {on_object} TO {to_role}")
+            t.db.execute(f"GRANT {privileges} ON {on_object} TO {to_role}")
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "granted": privileges, "on": on_object, "to": to_role}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=t.dbname)
+        return attach(
+            {"ok": True, "granted": privileges, "on": on_object, "to": to_role},
+            info,
+            database=t.dbname,
+        )
 
     @mcp.tool(
         title="Revoke privileges",
@@ -96,14 +100,19 @@ def register(mcp, ctx) -> None:
     )
     def revoke(privileges: str, on_object: str, from_role: str) -> dict:
         """Run REVOKE <privileges> ON <on_object> FROM <role>. Requires DB_ADMIN."""
-        allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
+        t = ctx.manager.current_target()
+        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:
             return info
         try:
-            db.execute(f"REVOKE {privileges} ON {on_object} FROM {from_role}")
+            t.db.execute(f"REVOKE {privileges} ON {on_object} FROM {from_role}")
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
-        return attach({"ok": True, "revoked": privileges, "on": on_object, "from": from_role}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=t.dbname)
+        return attach(
+            {"ok": True, "revoked": privileges, "on": on_object, "from": from_role},
+            info,
+            database=t.dbname,
+        )
 
     @mcp.tool(
         title="Administrative SQL",
@@ -113,15 +122,13 @@ def register(mcp, ctx) -> None:
     )
     def admin_sql(sql_text: str) -> dict:
         """Execute an arbitrary administrative statement. Requires DB_ADMIN."""
-        allowed, info = guard_or_error(caps, db_min=DbTier.DB_ADMIN)
+        t = ctx.manager.current_target()
+        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:
             return info
         try:
-            result = db.execute(sql_text)
+            result = t.db.execute(sql_text)
         except Exception as exc:  # noqa: BLE001
-            return attach({"ok": False, "error": str(exc)}, info)
+            return attach({"ok": False, "error": str(exc)}, info, database=t.dbname)
         result["ok"] = True
-        return attach(result, info)
-
-    if caps.db_tier() >= DbTier.DB_ADMIN:
-        ctx.enabled_tools += ["create_database", "create_role", "grant", "revoke", "admin_sql"]
+        return attach(result, info, database=t.dbname)
