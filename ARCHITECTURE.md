@@ -267,7 +267,8 @@ sudo python3 mcp-postgres/install.py --bind 127.0.0.1 --port 8080 --start --run-
 ```
 
 It requires only the system `python3` (no third-party packages before the venv exists) and is
-**idempotent** — safe to re-run to upgrade or repair an install.
+**idempotent** — safe to re-run to repair an install. For routine code updates on a running host,
+use `update.py` (§10a) rather than re-running the full installer.
 
 **Parameters.** Everything is an `argparse` flag: `--bind`, `--port`, `--db-name`,
 `--db-user` (default `mcp`), `--grant-wheel`, `--python`, `--start`, `--run-selftest`,
@@ -299,6 +300,26 @@ is auto-generated if not supplied.
    a manual DBA step).
 7. **Activate** — `systemctl daemon-reload`; with `--start`, `systemctl enable --now`; with
    `--run-selftest`, run the prod self-test suite (§11) and print the result.
+
+<a id="10a"></a>
+### 10a. Updater (`update.py`)
+
+Routine code updates on a live host use a second stdlib-only script, `update.py`, run from the
+repo directory (`sudo mcp-postgres/update`). It `import`s `install.py` and reuses its file/venv
+steps, adding the two things an *update* needs that a first install does not:
+
+- a **forced** venv reinstall — the pinned package version rarely changes between commits, so a
+  plain `pip install <repo>` would report *"already satisfied"* and silently keep the old code;
+  `build_venv(force_reinstall=True)` reinstalls the package (`--force-reinstall --no-deps`), then a
+  normal install to pull any newly added dependencies;
+- a **service restart** (`systemctl restart`) so the new code is actually loaded (the installer
+  only `daemon-reload`s and, with `--start`, `enable --now`s).
+
+Steps: preflight → `git pull --ff-only` **as the checkout owner** (unless `--no-pull`; git refuses
+a root pull into a user-owned tree) → refresh files (`lay_down_files`) → forced venv reinstall →
+`daemon-reload` + `restart` → self-test (unless `--no-selftest`; a failure exits non-zero). Config
+and secrets are never touched. Because the script imports `install.py` at startup, changes to the
+installer scripts themselves land on the *next* run; ordinary app code updates on this run.
 
 ---
 

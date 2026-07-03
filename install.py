@@ -148,16 +148,24 @@ def install_sudoers() -> None:
         os.unlink(tmp_path)
 
 
-def build_venv(args) -> None:
+def build_venv(args, *, force_reinstall: bool = False) -> None:
     python = args.python or sys.executable
     if not VENV_DIR.exists():
         run([python, "-m", "venv", str(VENV_DIR)])
     pip = str(VENV_DIR / "bin" / "pip")
     run([pip, "install", "--upgrade", "pip"])
     if args.offline_wheels:
-        run([pip, "install", "--no-index", "--find-links", args.offline_wheels, "mcp-postgres"])
+        base = [pip, "install", "--no-index", "--find-links", args.offline_wheels]
+        target = "mcp-postgres"
     else:
-        run([pip, "install", str(REPO)])
+        base = [pip, "install"]
+        target = str(REPO)
+    if force_reinstall:
+        # The pinned version rarely changes between commits, so a plain re-install
+        # would be a no-op ("already satisfied"). Force just the package code first
+        # (fast, --no-deps), then a normal install to pull any newly added deps.
+        run(base + ["--force-reinstall", "--no-deps", target])
+    run(base + [target])
     _chown_tree(HOME_DIR)
     info("venv built and package installed")
 

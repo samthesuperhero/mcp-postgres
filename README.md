@@ -122,6 +122,18 @@ sudo mcp-postgres/admin                  # toggle OS wheel + DB superuser in loc
 `mcp-postgres/admin` is the committed launcher for `admin.py` (equivalent to
 `sudo python3 mcp-postgres/admin.py …`).
 
+### Updating
+
+To ship new code to a deployed host, run one command from the repo directory:
+```bash
+sudo mcp-postgres/update            # git pull + reinstall + restart + self-test
+```
+It pulls the latest code (as the checkout owner), refreshes the privhelper/unit/sudoers,
+**force-reinstalls** the package into the venv (a plain re-install would be skipped since the
+version is unchanged), restarts the service, and runs the self-test — failing loudly if the
+service comes back unhealthy. Config and secrets under `/etc/mcp-postgres/` are left untouched.
+Flags: `--no-pull` (deploy local/uncommitted changes) and `--no-selftest`.
+
 Config-file backups (`.bak`, timestamped) are written next to `postgresql.conf` / `pg_hba.conf`
 before any edit. Some `postgresql.conf` settings need a **PostgreSQL restart** (not just a
 reload) to take effect — the service flags these to the agent but never restarts PostgreSQL on
