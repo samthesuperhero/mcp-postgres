@@ -54,11 +54,15 @@ git clone https://github.com/samthesuperhero/mcp-postgres.git
 
 ### 2. Run the installer
 ```bash
-sudo python3 mcp-postgres/install.py \
+sudo mcp-postgres/install \
   --bind 127.0.0.1 --port 8080 \
   --start --run-selftest
 # add --grant-wheel to allow editing postgresql.conf / pg_hba.conf (else config tools stay off)
 ```
+`mcp-postgres/install` is a thin launcher committed alongside the code (so it works right
+after cloning); it is exactly equivalent to `sudo python3 mcp-postgres/install.py …`. To pass
+secrets via the environment, keep them across `sudo` with `-E`, e.g.
+`MCP_PG_TOKEN=… sudo -E mcp-postgres/install --force`.
 You'll be **prompted for the `mcp` DB password** (or set `MCP_PG_DB_PASSWORD`); the bearer token
 is generated automatically (or set `MCP_PG_TOKEN`). The installer then:
 
@@ -72,8 +76,9 @@ is generated automatically (or set `MCP_PG_TOKEN`). The installer then:
 The printed output includes the generated bearer token — save it for step 4.
 
 Re-running the installer is safe: it **won't overwrite an existing `config.toml`, DB password,
-or token**. To change them, pass `--force` (regenerates config from the flags and rotates the
-token) or supply a new value via `MCP_PG_DB_PASSWORD` / `MCP_PG_TOKEN`.
+or token**. To change them, pass `--force` (`sudo mcp-postgres/install --force` regenerates
+config from the flags and rotates the token) or supply a new value via `MCP_PG_DB_PASSWORD` /
+`MCP_PG_TOKEN`.
 
 ### 3. Create the PostgreSQL role
 The service connects as role `mcp`. Create it with whatever privileges you intend (read-only,
@@ -105,7 +110,11 @@ bound to `127.0.0.1`.
 ```bash
 sudo systemctl restart mcp-postgres      # apply config changes
 journalctl -u mcp-postgres -f            # follow logs
+sudo mcp-postgres/admin --status         # report OS/DB admin rights (no change)
+sudo mcp-postgres/admin                  # toggle OS wheel + DB superuser in lockstep
 ```
+`mcp-postgres/admin` is the committed launcher for `admin.py` (equivalent to
+`sudo python3 mcp-postgres/admin.py …`).
 
 Config-file backups (`.bak`, timestamped) are written next to `postgresql.conf` / `pg_hba.conf`
 before any edit. Some `postgresql.conf` settings need a **PostgreSQL restart** (not just a

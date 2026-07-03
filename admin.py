@@ -3,8 +3,9 @@
 
 Run once, as root, from the repo directory (same as install.py):
 
-    sudo python3 mcp-postgres/admin.py            # toggle both sides
-    sudo python3 mcp-postgres/admin.py --status   # report only, no change
+    sudo mcp-postgres/admin            # toggle both sides
+    sudo mcp-postgres/admin --status   # report only, no change
+    # (thin launcher; equivalent to sudo python3 mcp-postgres/admin.py ...)
 
 `mcp-postgres` is privilege self-aware: it measures two independent tiers and
 re-checks them before every action (see ARCHITECTURE.md sec.4). This tool flips

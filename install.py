@@ -3,7 +3,8 @@
 
 Run once, as root, on the target RHEL-based host:
 
-    sudo python3 mcp-postgres/install.py --bind 127.0.0.1 --port 8080 --start --run-selftest
+    sudo mcp-postgres/install --bind 127.0.0.1 --port 8080 --start --run-selftest
+    # equivalently: sudo python3 mcp-postgres/install.py ...  (the launcher is a thin wrapper)
 
 Creates the mcp-postgres OS user, lays down all files, builds the venv, writes
 config + secrets with correct permissions, installs the systemd unit and a scoped
