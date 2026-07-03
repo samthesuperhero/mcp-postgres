@@ -25,7 +25,7 @@ def _only_known(cls, data: dict) -> dict:
 @dataclass
 class ServerConfig:
     bind: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 41780
     path: str = "/mcp"
 
 

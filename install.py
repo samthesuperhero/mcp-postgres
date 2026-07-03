@@ -3,7 +3,7 @@
 
 Run once, as root, on the target RHEL-based host:
 
-    sudo mcp-postgres/install --bind 127.0.0.1 --port 8080 --start --run-selftest
+    sudo mcp-postgres/install --bind 127.0.0.1 --port 41780 --start --run-selftest
     # equivalently: sudo python3 mcp-postgres/install.py ...  (the launcher is a thin wrapper)
 
 Creates the mcp-postgres OS user, lays down all files, builds the venv, writes
@@ -303,7 +303,7 @@ def activate(args, token: str, generated_token: bool) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Install mcp-postgres")
     p.add_argument("--bind", default="127.0.0.1", help="MCP bind address (default 127.0.0.1)")
-    p.add_argument("--port", type=int, default=8080, help="MCP port (default 8080)")
+    p.add_argument("--port", type=int, default=41780, help="MCP port (default 41780, behind nginx)")
     p.add_argument("--path", default="/mcp", help="MCP HTTP path (default /mcp)")
     p.add_argument("--db-user", default="mcp", help="PostgreSQL role (default mcp)")
     p.add_argument("--db-name", default="postgres", help="default database (default postgres)")

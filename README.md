@@ -61,7 +61,7 @@ git clone https://github.com/samthesuperhero/mcp-postgres.git
 ### 2. Run the installer
 ```bash
 sudo mcp-postgres/install \
-  --bind 127.0.0.1 --port 8080 \
+  --bind 127.0.0.1 --port 41780 \
   --start --run-selftest
 # add --grant-wheel to allow editing postgresql.conf / pg_hba.conf (else config tools stay off)
 ```
@@ -96,18 +96,85 @@ Or let the installer do it by adding `--create-db-role` in step 2 (requires the 
 have `postgres` superuser access).
 
 ### 4. Connect an agent
-The server speaks MCP over **Streamable HTTP** at `http://<host>:8080/mcp` (default). Example
-for Claude Code:
-```bash
-claude mcp add --transport http postgres http://127.0.0.1:8080/mcp \
-  --header "Authorization: Bearer <token-from-step-2>"
-```
-For remote access, front it with a TLS-terminating reverse proxy (e.g. nginx) — keep the app
-bound to `127.0.0.1`.
+Hand the agent the endpoint URL and the bearer token — see
+**[Connecting an agent](#connecting-an-agent)** below for the exact values, where to read the
+token, and a ready-to-run Claude Code example.
 
 > Re-run the self-tests any time: `sudo -u mcp-postgres /opt/mcp-postgres/venv/bin/mcp-postgres-selftest`
 > — verifies the service is active, the MCP handshake and DB connectivity work, the reported
 > capabilities match reality, and the config-file allowlist and read-only guard hold.
+
+---
+
+## Configuring the service
+
+Everything the service reads lives under **`/etc/mcp-postgres/`** on the host (created by the
+installer). After any change, apply it with `sudo systemctl restart mcp-postgres`.
+
+### `config.toml` — non-secret settings
+Mode `0640`, owner `root:mcp-postgres`. Secrets are **not** stored here.
+```toml
+[server]
+bind = "127.0.0.1"   # keep on localhost — nginx is the public front
+port = 41780
+path = "/mcp"
+
+[database]
+host = "127.0.0.1"
+port = 5432
+user = "mcp"         # the PostgreSQL role the service connects as
+dbname = "postgres"
+
+[logging]
+level = "INFO"
+```
+Edit it directly, or re-run the installer with `--force` to regenerate it from the
+`--bind` / `--port` / `--db-user` / … flags.
+
+### Secrets — two files, mode `0600`, owner `mcp-postgres`
+| File | Contents |
+|------|----------|
+| `/etc/mcp-postgres/secret` | password for the PostgreSQL role `mcp` (never stored in `config.toml`) |
+| `/etc/mcp-postgres/token`  | the MCP bearer token agents must present |
+
+To change a secret, edit the file (then restart) or re-run the installer:
+`--force` rotates the token, while `MCP_PG_DB_PASSWORD=… sudo -E mcp-postgres/install --force`
+sets a specific DB password (`MCP_PG_TOKEN=…` sets a specific token). The env vars
+`MCP_PG_DB_PASSWORD` / `MCP_PG_TOKEN` also override the files at runtime, and `MCP_PG_CONFIG_DIR`
+relocates the whole directory (used by tests).
+
+### Reading the bearer token
+The installer prints it once, when it generates it (step 2). To retrieve it later:
+```bash
+sudo cat /etc/mcp-postgres/token
+```
+
+---
+
+## Connecting an agent
+
+An agent needs exactly two credentials:
+
+| Credential | Value |
+|------------|-------|
+| **Endpoint URL** | on-host: `http://127.0.0.1:41780/mcp` · remote (via nginx): `https://<host>/mcp` |
+| **Bearer token** | the contents of `/etc/mcp-postgres/token` — `sudo cat` it (see above) |
+
+Transport is MCP **Streamable HTTP**; authentication is the header `Authorization: Bearer <token>`.
+The app stays bound to `127.0.0.1:41780`, so **remote** agents connect through the nginx reverse
+proxy (which terminates TLS) — never the app port directly.
+
+**Claude Code:**
+```bash
+claude mcp add --transport http postgres http://127.0.0.1:41780/mcp \
+  --header "Authorization: Bearer <token>"
+# remote: swap the URL for your nginx endpoint, e.g. https://<host>/mcp
+```
+
+**Any other MCP client:** point it at the endpoint URL over the Streamable HTTP transport and set
+the `Authorization: Bearer <token>` header. Once connected the agent can discover the rest itself —
+the server returns `instructions` on connect and publishes a capability guide; a good first call is
+`get_capabilities`.
 
 ---
 

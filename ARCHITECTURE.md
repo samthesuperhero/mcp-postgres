@@ -33,8 +33,9 @@ do something it currently cannot (and is notified when its rights change at runt
 - **Protocol:** MCP over **Streamable HTTP** (the current standard HTTP transport in the
   Python MCP SDK). Chosen because the service is a shared, long-lived `systemd` daemon that
   remote AI agents connect to — stdio would require each agent to spawn the process locally.
-- **Bind address:** configurable IPv4 + port, default `127.0.0.1:8080`. For remote access,
-  front it with a TLS-terminating reverse proxy (see §7).
+- **Bind address:** configurable IPv4 + port, default `127.0.0.1:41780`. In the standard
+  deployment an **nginx** reverse proxy terminates TLS and forwards to this local upstream;
+  remote agents reach the service through nginx, never the app port directly (see §9).
 - **Authentication:** a static **bearer token** (`Authorization: Bearer <token>`) validated by
   HTTP middleware. The token lives in `/etc/mcp-postgres/token` (mode `0600`).
 
@@ -248,8 +249,9 @@ it stays safe even when the role could otherwise write.
 - **Least privilege by measurement:** the service can only do what the *measured* tiers permit,
   re-checked before every action (§4).
 - **Config writes are doubly constrained** (§6) and always create a timestamped backup.
-- **Transport:** bearer-token auth; bind `127.0.0.1` by default; use a reverse proxy for TLS
-  when exposing remotely.
+- **Transport:** bearer-token auth; bind `127.0.0.1:41780` by default, fronted by an **nginx**
+  reverse proxy that terminates TLS and is the only public entry point (the app port is never
+  exposed directly).
 - **systemd hardening:** `User=mcp-postgres`, `ProtectSystem`, `ProtectHome`, journald logging.
   Note: `NoNewPrivileges` must remain **false** — otherwise `sudo`, and therefore config
   editing, would be blocked. This is a deliberate, documented trade-off.
@@ -263,7 +265,7 @@ A privileged user (root, or a sudo-capable admin) clones the repo into their hom
 runs it once:
 
 ```bash
-sudo python3 mcp-postgres/install.py --bind 127.0.0.1 --port 8080 --start --run-selftest
+sudo python3 mcp-postgres/install.py --bind 127.0.0.1 --port 41780 --start --run-selftest
 ```
 
 It requires only the system `python3` (no third-party packages before the venv exists) and is
