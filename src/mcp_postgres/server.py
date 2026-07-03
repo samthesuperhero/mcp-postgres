@@ -12,7 +12,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from .capabilities import CapabilityManager
-from .config import Config, load_config
+from .config import Config, check_config, load_config
 from .context import AppContext
 from .db import Database
 from .docs import REPO_URL, SERVER_INSTRUCTIONS
@@ -92,6 +92,11 @@ def main() -> None:
     )
     if not cfg.token:
         log.warning("no bearer token configured — the MCP endpoint is UNAUTHENTICATED")
+
+    # Advisory only: report config.toml drift from the current schema (new keys
+    # running on defaults, deprecated/unrecognized keys). Never fatal.
+    for line in check_config(cfg.config_dir).messages():
+        log.warning("config: %s", line)
 
     mcp, _ctx = build_server(cfg)
     app = mcp.streamable_http_app()

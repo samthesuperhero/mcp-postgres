@@ -131,6 +131,15 @@ level = "INFO"
 Edit it directly, or re-run the installer with `--force` to regenerate it from the
 `--bind` / `--port` / `--db-user` / … flags.
 
+**Schema changes across versions.** `sudo mcp-postgres/update` **migrates `config.toml` in
+place** to the running version's schema: it writes a timestamped `config.toml.<ts>.bak`, adds
+any newly-introduced settings as *commented* lines (so the effective config is unchanged — the
+service keeps using their defaults until you uncomment), and comments out settings that have been
+retired. Your values, comments, and layout are preserved; only new/retired keys are annotated.
+Skip it with `sudo mcp-postgres/update --no-config-migrate`, or run it on demand with
+`sudo /opt/mcp-postgres/venv/bin/mcp-postgres-migrate-config`. Unrecognized keys (e.g. typos) are
+left untouched and merely reported by the self-test and in the service log.
+
 ### Secrets — two files, mode `0600`, owner `mcp-postgres`
 | File | Contents |
 |------|----------|

@@ -16,16 +16,17 @@ from .config import Config, load_config
 
 class Result:
     def __init__(self):
-        self.checks: list[tuple[str, bool, str]] = []
+        self.checks: list[tuple[str, bool, str, bool]] = []  # (name, ok, detail, warn)
         self.extras: dict[str, str] = {}  # verbose-only extra detail, keyed by check name
 
-    def add(self, name: str, ok: bool, detail: str = "", extra: str = "") -> None:
-        self.checks.append((name, ok, detail))
+    def add(self, name: str, ok: bool, detail: str = "", extra: str = "", warn: bool = False) -> None:
+        # ``warn`` marks an advisory (rendered [WARN]) that never fails the suite.
+        self.checks.append((name, ok, detail, warn))
         if extra:
             self.extras[name] = extra
 
     def ok(self) -> bool:
-        return all(ok for _n, ok, _d in self.checks)
+        return all(ok for _n, ok, _d, warn in self.checks if not warn)
 
 
 def _explain(exc: BaseException) -> str:
@@ -199,6 +200,23 @@ def _db_check(cfg: Config, res: Result) -> None:
         res.add("db-connect", False, str(exc))
 
 
+def _config_schema_check(cfg: Config, res: Result) -> None:
+    """Advisory: does config.toml still match the current schema? Never fails."""
+    from .config import check_config
+
+    report = check_config(cfg.config_dir)
+    if not report.any():
+        res.add("config-schema", True, "config.toml matches schema")
+        return
+    res.add(
+        "config-schema",
+        True,
+        report.summary() + " (advisory — run `mcp-postgres-migrate-config` to tidy)",
+        extra="\n".join(report.messages()),
+        warn=True,
+    )
+
+
 def _service_check(res: Result) -> None:
     try:
         proc = subprocess.run(
@@ -236,6 +254,7 @@ def run_all(cfg: Config, wait: float = 0.0) -> Result:
     import anyio
 
     res = Result()
+    _config_schema_check(cfg, res)
     _service_check(res)
     _db_check(cfg, res)
     _allowlist_check(cfg, res)
@@ -279,8 +298,8 @@ def main() -> None:
         print("-" * 60)
 
     res = run_all(cfg, wait=args.wait)
-    for name, ok, detail in res.checks:
-        mark = "PASS" if ok else "FAIL"
+    for name, ok, detail, warn in res.checks:
+        mark = "WARN" if warn else ("PASS" if ok else "FAIL")
         line = f"[{mark}] {name}"
         if detail:
             line += f" — {detail}"
@@ -289,8 +308,8 @@ def main() -> None:
             for ln in res.extras[name].splitlines():
                 print(f"           {ln}")
     print("-" * 60)
-    total = len(res.checks)
-    passed = sum(1 for _n, ok, _d in res.checks if ok)
+    total = sum(1 for _n, _ok, _d, warn in res.checks if not warn)
+    passed = sum(1 for _n, ok, _d, warn in res.checks if not warn and ok)
     print(f"{passed}/{total} checks passed")
     sys.exit(0 if res.ok() else 1)
 

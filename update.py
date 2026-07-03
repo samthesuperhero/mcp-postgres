@@ -11,8 +11,12 @@ available upstream:
 It reuses install.py's building blocks (files + venv) and adds the two things a
 code update needs that a first-time install does not: a *forced* venv reinstall
 (the pinned version rarely changes between commits, so pip would otherwise skip
-it) and a service restart. Config and secrets under /etc/mcp-postgres are never
-touched.
+it) and a service restart.
+
+config.toml is *migrated in place* to the new schema before the restart (a
+timestamped .bak is written first; new keys are added commented, deprecated keys
+are commented out — the effective config is never changed). Skip it with
+--no-config-migrate. Secrets under /etc/mcp-postgres are still never touched.
 
 Stdlib only -- it must run without the application venv.
 
@@ -101,6 +105,19 @@ def git_pull() -> None:
         info(f"already up to date at {after or 'unknown'}")
 
 
+def migrate_config() -> None:
+    """Bring /etc/mcp-postgres/config.toml up to the freshly-installed schema.
+
+    Runs the venv's migrate entrypoint (as root, so it can rewrite the
+    root-owned file). Advisory: a failure is warned about, never fatal.
+    """
+    migrate = install.VENV_DIR / "bin" / "mcp-postgres-migrate-config"
+    if not migrate.exists():
+        info("migrate-config entrypoint not found -- skipping config migration")
+        return
+    run([str(migrate)], check=False)
+
+
 def run_selftest() -> None:
     selftest = install.VENV_DIR / "bin" / "mcp-postgres-selftest"
     info("running self-tests...")
@@ -113,6 +130,7 @@ def run_selftest() -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Update a deployed mcp-postgres in place")
     p.add_argument("--no-pull", action="store_true", help="skip git pull (deploy local changes)")
+    p.add_argument("--no-config-migrate", action="store_true", help="skip the in-place config.toml migration")
     p.add_argument("--no-selftest", action="store_true", help="skip the post-restart self-test")
     p.add_argument("--python", help="python interpreter to (re)build the venv with")
     p.add_argument("--offline-wheels", help="dir of wheels for offline install")
@@ -130,6 +148,11 @@ def main() -> None:
 
     install.lay_down_files()  # refresh privhelper, systemd unit, sudoers drop-in
     install.build_venv(args, force_reinstall=True)
+
+    if args.no_config_migrate:
+        info("skipping config migration (--no-config-migrate)")
+    else:
+        migrate_config()  # uses the freshly-installed schema; before the restart
 
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "restart", SERVICE])

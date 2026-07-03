@@ -315,13 +315,28 @@ steps, adding the two things an *update* needs that a first install does not:
   `build_venv(force_reinstall=True)` reinstalls the package (`--force-reinstall --no-deps`), then a
   normal install to pull any newly added dependencies;
 - a **service restart** (`systemctl restart`) so the new code is actually loaded (the installer
-  only `daemon-reload`s and, with `--start`, `enable --now`s).
+  only `daemon-reload`s and, with `--start`, `enable --now`s);
+- an in-place **config migration** (`mcp-postgres-migrate-config`, unless `--no-config-migrate`)
+  run *after* the reinstall (so it sees the new schema) and *before* the restart.
 
 Steps: preflight → `git pull --ff-only` **as the checkout owner** (unless `--no-pull`; git refuses
 a root pull into a user-owned tree) → refresh files (`lay_down_files`) → forced venv reinstall →
-`daemon-reload` + `restart` → self-test (unless `--no-selftest`; a failure exits non-zero). Config
-and secrets are never touched. Because the script imports `install.py` at startup, changes to the
-installer scripts themselves land on the *next* run; ordinary app code updates on this run.
+**config migration** → `daemon-reload` + `restart` → self-test (unless `--no-selftest`; a failure
+exits non-zero). Because the script imports `install.py` at startup, changes to the installer
+scripts themselves land on the *next* run; ordinary app code updates on this run.
+
+**Config migration (`configmigrate.py`).** `config.py` is the single source of truth for the config
+schema — the known `[section].key`s and defaults are derived from its dataclasses via
+`file_known_keys()`, secrets (`database.password`) are excluded via `SECRET_KEYS`, and removed keys
+are recorded in `DEPRECATED_KEYS`. `diff_config()` compares a `config.toml` against that schema;
+`apply_migration()` (pure text edits, unit-tested like `confedit.py`) rewrites the file to match:
+new keys are added **commented** (so the loader keeps applying their defaults — behavior-neutral,
+never pinning the operator to a default that may later change) and retired keys are commented out
+with their reason. The entrypoint writes a timestamped `.bak` first and preserves the file's
+`0640 root:mcp-postgres` mode/owner; it is idempotent and warn-only (a failure never aborts the
+update). Drift is also surfaced passively: the self-test prints a non-fatal `[WARN] config-schema`
+line and `server.py` logs one `WARNING config:` line per drift item at startup. **Secrets
+(`secret`, `token`) are never touched.**
 
 ---
 
