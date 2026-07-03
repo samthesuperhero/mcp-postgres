@@ -1,0 +1,17 @@
+# mcp-postgres configuration. Written by install.py.
+# Secrets are NOT stored here: the DB password lives in /etc/mcp-postgres/secret
+# and the MCP bearer token in /etc/mcp-postgres/token (both mode 0600).
+
+[server]
+bind = "__BIND__"
+port = __PORT__
+path = "__PATH__"
+
+[database]
+host = "127.0.0.1"
+port = 5432
+user = "__DBUSER__"
+dbname = "__DBNAME__"
+
+[logging]
+level = "__LOGLEVEL__"

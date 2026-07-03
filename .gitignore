@@ -354,6 +354,15 @@ paket-files/
 **/__pycache__/
 *.pyc
 
+# Python packaging / venv / test artifacts
+/build/
+/dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
 # Cake - Uncomment if you are using it
 #tools/**
 #!tools/packages.config

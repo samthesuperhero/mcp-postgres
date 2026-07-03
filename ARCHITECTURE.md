@@ -141,12 +141,16 @@ This guarantees the agent's view of its own privileges is never stale.
 The report is exposed to the agent in two complementary ways:
 
 1. **`get_capabilities` tool** returns the full structured report: OS tier, DB tier, connected
-   role name & attributes, discovered `config_file`/`hba_file` paths, the enabled tool list,
-   and a timestamp.
-2. **The tool list itself** reflects reality — only tools permitted by the current tiers are
-   registered, so an agent that lists tools sees exactly what it can call.
+   role name & attributes, discovered `config_file`/`hba_file` paths, the **`enabled_tools`**
+   list (exactly the tools the current tiers permit), any DB error, and a timestamp.
+2. **The guard on every gated tool.** All tools are registered so a privilege *gained* mid-session
+   is immediately usable without a restart, but each gated tool re-checks its required tier on
+   every call (§4) and refuses — with a clear, machine-readable reason plus any
+   `capability_changed` notice — when the tier is not currently held. Agents should consult
+   `enabled_tools` to know which calls will succeed; calling a disabled tool returns a structured
+   refusal rather than acting.
 
-`capability_changed` notices (from §4) keep both in sync during a session.
+`capability_changed` notices (from §4) keep the agent's view in sync during a session.
 
 ---
 

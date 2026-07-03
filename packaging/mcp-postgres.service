@@ -1,0 +1,34 @@
+[Unit]
+Description=mcp-postgres — privilege-aware MCP server for PostgreSQL management
+Documentation=https://modelcontextprotocol.io
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp-postgres
+Group=mcp-postgres
+ExecStart=/opt/mcp-postgres/venv/bin/mcp-postgres
+Restart=on-failure
+RestartSec=3
+
+# Logging to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcp-postgres
+
+# Hardening. NOTE: two directives MUST stay permissive so the privileged helper
+# works: NoNewPrivileges=false and RestrictSUIDSGID=false (sudo is SUID-root and
+# needs to escalate). ProtectSystem=true (not full) leaves /etc writable so config
+# editing works regardless of where the distro keeps postgresql.conf / pg_hba.conf.
+NoNewPrivileges=false
+RestrictSUIDSGID=false
+ProtectSystem=true
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ReadWritePaths=/etc/mcp-postgres
+
+[Install]
+WantedBy=multi-user.target

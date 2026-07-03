@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-postgres"
+version = "0.1.0"
+description = "Privilege-aware MCP server for managing a local PostgreSQL database"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "TBD" }
+authors = [{ name = "mcp-postgres" }]
+dependencies = [
+    "mcp>=1.2.0",
+    "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.2",
+    "uvicorn>=0.27",
+    "starlette>=0.37",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+mcp-postgres = "mcp_postgres.server:main"
+mcp-postgres-selftest = "mcp_postgres.selftest:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

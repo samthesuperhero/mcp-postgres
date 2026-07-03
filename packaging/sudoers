@@ -1,0 +1,5 @@
+# Managed by mcp-postgres install.py — do not edit by hand.
+# Allow the mcp-postgres service user to run ONLY the privhelper via sudo,
+# without a password. The privhelper itself enforces the two-file allowlist.
+mcp-postgres ALL=(root) NOPASSWD: /usr/libexec/mcp-postgres/privhelper
+Defaults!/usr/libexec/mcp-postgres/privhelper !requiretty
