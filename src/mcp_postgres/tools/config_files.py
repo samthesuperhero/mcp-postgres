@@ -10,7 +10,7 @@ from __future__ import annotations
 from mcp.types import ToolAnnotations
 
 from ..capabilities import DbTier, OsTier
-from ..confedit import append_hba_rule, set_conf_value
+from ..confedit import append_hba_rule, is_shadowed_source, set_conf_value
 from .base import attach, guard_or_error
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -121,19 +121,25 @@ def register(mcp, ctx) -> None:
             )
         try:
             content = priv.read(path)
-            new_content, changed, old = set_conf_value(content, name, value)
-            if changed:
-                priv.write(path, new_content)
+            edit = set_conf_value(content, name, value)
+            if edit.changed:
+                priv.write(path, edit.content)
         except Exception as exc:  # noqa: BLE001
             return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
 
-        row = target.db.query_one("SELECT context FROM pg_settings WHERE name = %s", (name,))
+        # pg_settings still reflects the config loaded before this write, so
+        # `sourcefile` names the file currently supplying the effective value — used
+        # below to warn when another file (e.g. postgresql.auto.conf) shadows our edit.
+        row = target.db.query_one(
+            "SELECT context, sourcefile FROM pg_settings WHERE name = %s", (name,)
+        )
         context = row["context"] if row else None
+        sourcefile = row.get("sourcefile") if row else None
         restart_required = context == "postmaster"
 
         reloaded, reload_error = False, None
         want_reload = str(reload).lower() in ("auto", "true", "1", "yes")
-        if changed and want_reload and not restart_required:
+        if edit.changed and want_reload and not restart_required:
             reloaded, reload_error = _reload_postgres(ctx, target)
 
         result = {
@@ -141,8 +147,10 @@ def register(mcp, ctx) -> None:
             "file": "postgresql.conf",
             "path": path,
             "setting": name,
-            "changed": changed,
-            "old_value": old,
+            "changed": edit.changed,
+            "action": edit.action,
+            "active_occurrences": edit.active_occurrences,
+            "old_value": edit.old_value,
             "new_value": value,
             "setting_context": context,
             "restart_required": restart_required,
@@ -150,11 +158,30 @@ def register(mcp, ctx) -> None:
         }
         if reload_error:
             result["reload_error"] = reload_error
-        if restart_required and changed:
-            result["note"] = (
+
+        notes: list[str] = []
+        if edit.shadowed_disabled:
+            result["duplicates_disabled"] = edit.shadowed_disabled
+            notes.append(
+                f"Found {edit.active_occurrences} active '{name}' lines; PostgreSQL uses the "
+                f"last one, so the effective line was updated and {edit.shadowed_disabled} "
+                f"earlier duplicate(s) were commented out to leave a single unambiguous setting."
+            )
+        if is_shadowed_source(path, sourcefile):
+            result["effective_source_file"] = sourcefile
+            notes.append(
+                f"'{name}' is currently supplied by {sourcefile}, not the file just edited. That "
+                f"file overrides postgresql.conf (e.g. postgresql.auto.conf written by ALTER "
+                f"SYSTEM, or a later include), so this change will not take effect until '{name}' "
+                f"is updated or removed there."
+            )
+        if restart_required and edit.changed:
+            notes.append(
                 "This setting requires a full PostgreSQL restart; the service does "
                 "not restart PostgreSQL automatically."
             )
+        if notes:
+            result["note"] = " ".join(notes)
         return attach(result, info, database=target.dbname)
 
     @mcp.tool(title="Append pg_hba.conf rule", annotations=_WRITE)

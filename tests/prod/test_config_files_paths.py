@@ -71,7 +71,9 @@ class _StubCaps:
 
 class _StubDb:
     def query_one(self, sql, params=None):
-        return {"context": "sighup"}
+        # Mirror the real pg_settings probe: effective value comes from the
+        # postgresql.conf we edit, so no shadow warning should fire.
+        return {"context": "sighup", "sourcefile": CONFIG_FILE}
 
 
 class _StubTarget:
@@ -130,9 +132,13 @@ def test_update_setting_reads_and_writes_discovered_path():
     result = tools["update_postgresql_setting"]("max_connections", "200")
     assert result["ok"] is True
     assert result["changed"] is True
+    assert result["action"] == "replaced"
     assert priv.reads == [CONFIG_FILE]
     assert [p for p, _ in priv.writes] == [CONFIG_FILE]
     assert result["path"] == CONFIG_FILE
+    # Single occurrence in the edited file → no duplicate/shadow warnings.
+    assert "duplicates_disabled" not in result
+    assert "note" not in result
 
 
 def test_update_hba_rule_writes_discovered_path():

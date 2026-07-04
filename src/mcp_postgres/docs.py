@@ -186,6 +186,12 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
 - **Reload vs restart**: after a successful config change the service reloads PostgreSQL
   (`reload = auto|true|false`, default `auto`). Settings that require a full restart are
   flagged in the response; the service never restarts PostgreSQL on its own.
+- **Duplicate- and shadow-aware writes**: PostgreSQL honours the *last* uncommented line
+  for a setting, so `update_postgresql_setting` edits that effective line and comments out
+  any earlier duplicates (reported as `duplicates_disabled`), leaving one unambiguous
+  setting. It also checks `pg_settings.sourcefile`: if the value is really coming from
+  another file (e.g. `postgresql.auto.conf` from `ALTER SYSTEM`, or a later `include`), the
+  response's `note` warns that the edit is shadowed and names the file that must change.
 - **Do not bypass the config tools.** Setting configuration by other means — e.g.
   `admin_sql` running `ALTER SYSTEM` — skips the allowlist/backup/restart-flagging and is
   a known footgun: `ALTER SYSTEM SET shared_preload_libraries = 'a,b'` stores the whole

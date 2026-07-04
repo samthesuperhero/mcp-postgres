@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-postgres"
-version = "0.6.3"
+version = "0.7.0"
 description = "Privilege-aware MCP server for managing a local PostgreSQL database"
 requires-python = ">=3.11"
 readme = "README.md"
