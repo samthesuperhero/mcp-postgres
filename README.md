@@ -237,6 +237,11 @@ capability-gated tools.
 > handshake against the local endpoint when `[oauth]` is enabled), or by hand:
 > `curl -s https://db.example.com/.well-known/oauth-protected-resource/mcp`.
 
+**Troubleshooting — `421 Misdirected Request` / `Invalid Host header`:** the server allowlists the
+host from `public_url` for DNS-rebinding protection. If authenticated `/mcp` calls 421, make sure
+`public_url`'s host exactly matches the hostname nginx serves and that nginx forwards the real Host
+(`proxy_set_header Host $host;`), then restart the service.
+
 ---
 
 ## Operations

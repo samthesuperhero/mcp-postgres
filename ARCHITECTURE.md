@@ -78,6 +78,12 @@ fronts `/mcp` with a standards-compliant **OAuth 2.1 Authorization Server + Reso
   can **not** be the internal `127.0.0.1` bind. nginx must proxy the new root-level paths
   (`/authorize`, `/token`, `/register`, `/revoke`, `/login`, `/.well-known/*`) to the same upstream,
   not just `/mcp`.
+- **DNS-rebinding allowlist** — binding `127.0.0.1` makes the MCP SDK auto-enable DNS-rebinding
+  protection that accepts only *localhost* `Host` headers, which would reject (HTTP 421 *Misdirected
+  Request*) every request nginx forwards with the real public `Host`. When OAuth is on, the server
+  therefore passes an explicit `TransportSecuritySettings` that adds `public_url`'s host to the
+  allowlist (`server.py:_transport_security`) — so a reverse proxy can keep forwarding the genuine
+  `Host` (`proxy_set_header Host $host`) while a spoofed host is still refused.
 
 When `[oauth]` is disabled (the default), none of this is mounted and the endpoint behaves exactly as
 before — static bearer token only.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 import uvicorn
 from mcp.server.auth.settings import (
@@ -16,6 +17,7 @@ from mcp.server.auth.settings import (
     RevocationOptions,
 )
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .capabilities import enabled_tools_for
 from .config import Config, check_config, load_config
@@ -114,6 +116,34 @@ def resolve_oauth(cfg: Config) -> tuple[PostgresOAuthProvider | None, AuthSettin
     return provider, auth_settings
 
 
+def _transport_security(cfg: Config) -> TransportSecuritySettings:
+    """Allowlist the Host/Origin values the reverse proxy forwards.
+
+    Binding ``127.0.0.1`` makes FastMCP auto-enable DNS-rebinding protection that
+    accepts *only* localhost Host headers — which rejects (HTTP 421) every request
+    nginx forwards with the real public Host (e.g. ``db.example.com``). We keep the
+    protection on but widen the allowlist to the public host from
+    ``oauth.public_url`` (plus localhost and the bind address), so remote clients
+    like the claude.ai web connector are accepted while nginx keeps forwarding the
+    genuine Host. Only used when OAuth is on (that's when a public host is known).
+    """
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    if cfg.server.bind and cfg.server.bind not in ("127.0.0.1", "localhost", "::1"):
+        hosts.append(f"{cfg.server.bind}:*")
+    parsed = urlparse(cfg.oauth.public_url)
+    if parsed.hostname:
+        # Exact (Host without a port, e.g. behind :443) plus any :port.
+        hosts.extend([parsed.hostname, f"{parsed.hostname}:*"])
+        origin = f"{parsed.scheme}://{parsed.hostname}"
+        origins.extend([origin, f"{origin}:*"])
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
+
+
 def build_server(
     cfg: Config,
     oauth_provider: PostgresOAuthProvider | None = None,
@@ -125,7 +155,13 @@ def build_server(
 
     auth_kwargs = {}
     if oauth_provider is not None and auth_settings is not None:
-        auth_kwargs = {"auth_server_provider": oauth_provider, "auth": auth_settings}
+        # OAuth means remote clients reach us through nginx with the public Host —
+        # widen the DNS-rebinding allowlist so those requests aren't 421'd.
+        auth_kwargs = {
+            "auth_server_provider": oauth_provider,
+            "auth": auth_settings,
+            "transport_security": _transport_security(cfg),
+        }
 
     mcp = FastMCP(
         "mcp-postgres",

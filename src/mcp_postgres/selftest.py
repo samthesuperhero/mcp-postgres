@@ -340,6 +340,23 @@ async def _oauth_flow(cfg: Config, res: Result) -> None:
             f"{chal.status_code}; WWW-Authenticate {'present' if wa else 'MISSING'}",
         )
 
+        # 2b. An *authenticated* request carrying the public Host (as nginx forwards
+        # it) must pass the DNS-rebinding guard — anything but 421. The guard runs
+        # only after auth succeeds, so this must carry a valid token; a 421 here
+        # means public_url's host isn't allowlisted and the reverse proxy would
+        # break real clients (the exact failure this check exists to catch).
+        pub_host = urlparse(cfg.oauth.public_url).netloc
+        hostchk = await c.get(
+            path,
+            headers={"host": pub_host, "Authorization": f"Bearer {cfg.token}"},
+        )
+        res.add(
+            "oauth-host-allowlist",
+            hostchk.status_code != 421,
+            f"authenticated public Host {pub_host!r} -> {hostchk.status_code} "
+            + ("(accepted)" if hostchk.status_code != 421 else "(REJECTED as misdirected)"),
+        )
+
         # 3. Full grant: DCR → authorize → login(token) → token (PKCE).
         redirect_uri = "http://localhost/callback"
         reg = await c.post(
