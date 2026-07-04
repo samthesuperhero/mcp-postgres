@@ -70,6 +70,16 @@ SAFETY
   / idempotent hints); prefer read-only tools unless a change is intended.
 - Config-file edits go through a two-file allowlist and always write a timestamped
   backup; some settings need a full PostgreSQL restart (flagged, never done for you).
+
+STAY WITHIN THESE TOOLS
+- Manage PostgreSQL only through the tools `get_capabilities` lists, each for its stated
+  purpose. If a tool errors or the required tier is missing, report that to the user —
+  do NOT substitute another tool to route around it.
+- Never use `admin_sql` / `ALTER SYSTEM` to do a config-file tool's job. Such bypasses
+  skip this server's safety net (two-file allowlist, timestamped backups,
+  restart-vs-reload flagging) and can silently misconfigure the cluster.
+- If a workaround is truly unavoidable, WARN the user first — name the guardrail you
+  would bypass and the risk — and proceed only with their consent.
 """
 
 
@@ -176,4 +186,11 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
 - **Reload vs restart**: after a successful config change the service reloads PostgreSQL
   (`reload = auto|true|false`, default `auto`). Settings that require a full restart are
   flagged in the response; the service never restarts PostgreSQL on its own.
+- **Do not bypass the config tools.** Setting configuration by other means — e.g.
+  `admin_sql` running `ALTER SYSTEM` — skips the allowlist/backup/restart-flagging and is
+  a known footgun: `ALTER SYSTEM SET shared_preload_libraries = 'a,b'` stores the whole
+  string as ONE quoted element and PostgreSQL then fails to start. Prefer
+  `update_postgresql_setting` (it writes `postgresql.conf` correctly); if ALTER SYSTEM is
+  truly necessary, warn the user first and pass list values as separate items
+  (`= 'a', 'b'`).
 """

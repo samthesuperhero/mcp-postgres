@@ -121,7 +121,11 @@ def register(mcp, ctx) -> None:
         ),
     )
     def admin_sql(sql_text: str) -> dict:
-        """Execute an arbitrary administrative statement. Requires DB_ADMIN."""
+        """Execute an arbitrary administrative statement. Requires DB_ADMIN.
+
+        Do not use this to bypass a dedicated tool — e.g. ALTER SYSTEM for configuration
+        that update_postgresql_setting handles. Warn the user before any such workaround.
+        """
         t = ctx.manager.current_target()
         allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
         if not allowed:

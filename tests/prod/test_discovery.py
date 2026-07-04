@@ -86,6 +86,8 @@ def test_instructions_and_guide_are_populated():
     assert docs.CAPABILITIES_URI in docs.SERVER_INSTRUCTIONS
     assert "tool catalog" in docs.GUIDE_MARKDOWN.lower()
     assert docs.REPO_URL in docs.GUIDE_MARKDOWN
+    assert "STAY WITHIN THESE TOOLS" in docs.SERVER_INSTRUCTIONS
+    assert "bypass" in docs.GUIDE_MARKDOWN.lower()
 
 
 def test_every_tool_has_title_and_annotations():
