@@ -16,6 +16,12 @@ log = logging.getLogger(__name__)
 
 PRIVHELPER = os.environ.get("MCP_PG_PRIVHELPER", "/usr/libexec/mcp-postgres/privhelper")
 
+# App-layer half of the two-layer allowlist: refuse a disallowed target before
+# shelling out to sudo. The privhelper hard-enforces the same set at the OS
+# boundary regardless, but failing here gives a clearer error and never spawns a
+# privileged process for a path that could never be accepted.
+ALLOWED_BASENAMES = frozenset({"postgresql.conf", "pg_hba.conf"})
+
 
 class PrivError(RuntimeError):
     pass
@@ -36,6 +42,10 @@ class PrivClient:
             raise PrivError(msg)
         return proc
 
+    def _check_path(self, path: str) -> None:
+        if os.path.basename(path) not in ALLOWED_BASENAMES:
+            raise PrivError(f"refusing {path!r}: basename not allowlisted")
+
     def check(self) -> bool:
         """Return True iff we can invoke the privhelper via passwordless sudo."""
         try:
@@ -44,9 +54,11 @@ class PrivClient:
             return False
 
     def read(self, path: str) -> str:
+        self._check_path(path)
         return self._run(["read", path]).stdout.decode(errors="replace")
 
     def write(self, path: str, content: str) -> None:
+        self._check_path(path)
         self._run(["write", path], input_bytes=content.encode())
 
     def reload(self) -> None:

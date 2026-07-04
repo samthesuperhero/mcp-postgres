@@ -14,6 +14,18 @@ from ..confedit import append_hba_rule, set_conf_value
 from .base import attach, guard_or_error
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+
+
+def _resolve_path(target, key: str) -> str | None:
+    """Absolute config_file / hba_file path as PostgreSQL reports it (or None).
+
+    The capability probe (``current_setting('config_file'|'hba_file')``) already
+    discovered these into ``db_info()``; the guard that precedes every config tool
+    populates that cache, so this is a cheap dict lookup with no extra round-trip.
+    The privhelper needs the full path — a bare basename would resolve against its
+    CWD (``/`` under sudo) and be rejected.
+    """
+    return target.caps.db_info().get(key)
 # Config writes edit a file in place (with a timestamped backup) but are not
 # "destructive" in the delete-data sense; re-applying the same change is a no-op.
 _WRITE = ToolAnnotations(
@@ -50,12 +62,20 @@ def register(mcp, ctx) -> None:
         allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
+        path = _resolve_path(target, "config_file")
+        if not path:
+            return attach(
+                {"ok": False, "error": "could not determine the postgresql.conf path "
+                                       "(config_file is unset; the database may be unreachable)"},
+                info, database=target.dbname,
+            )
         try:
-            content = priv.read("postgresql.conf")
+            content = priv.read(path)
         except Exception as exc:  # noqa: BLE001
             return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
         return attach(
-            {"ok": True, "file": "postgresql.conf", "content": content}, info, database=target.dbname
+            {"ok": True, "file": "postgresql.conf", "path": path, "content": content},
+            info, database=target.dbname,
         )
 
     @mcp.tool(title="Read pg_hba.conf", annotations=_READ_ONLY)
@@ -65,12 +85,20 @@ def register(mcp, ctx) -> None:
         allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
+        path = _resolve_path(target, "hba_file")
+        if not path:
+            return attach(
+                {"ok": False, "error": "could not determine the pg_hba.conf path "
+                                       "(hba_file is unset; the database may be unreachable)"},
+                info, database=target.dbname,
+            )
         try:
-            content = priv.read("pg_hba.conf")
+            content = priv.read(path)
         except Exception as exc:  # noqa: BLE001
             return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
         return attach(
-            {"ok": True, "file": "pg_hba.conf", "content": content}, info, database=target.dbname
+            {"ok": True, "file": "pg_hba.conf", "path": path, "content": content},
+            info, database=target.dbname,
         )
 
     @mcp.tool(title="Update postgresql.conf setting", annotations=_WRITE)
@@ -84,11 +112,18 @@ def register(mcp, ctx) -> None:
         allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
+        path = _resolve_path(target, "config_file")
+        if not path:
+            return attach(
+                {"ok": False, "error": "could not determine the postgresql.conf path "
+                                       "(config_file is unset; the database may be unreachable)"},
+                info, database=target.dbname,
+            )
         try:
-            content = priv.read("postgresql.conf")
+            content = priv.read(path)
             new_content, changed, old = set_conf_value(content, name, value)
             if changed:
-                priv.write("postgresql.conf", new_content)
+                priv.write(path, new_content)
         except Exception as exc:  # noqa: BLE001
             return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
 
@@ -104,6 +139,7 @@ def register(mcp, ctx) -> None:
         result = {
             "ok": True,
             "file": "postgresql.conf",
+            "path": path,
             "setting": name,
             "changed": changed,
             "old_value": old,
@@ -131,11 +167,18 @@ def register(mcp, ctx) -> None:
         allowed, info = guard_or_error(target.caps, os_min=OsTier.OS_CONFIG, database=target.dbname)
         if not allowed:
             return info
+        path = _resolve_path(target, "hba_file")
+        if not path:
+            return attach(
+                {"ok": False, "error": "could not determine the pg_hba.conf path "
+                                       "(hba_file is unset; the database may be unreachable)"},
+                info, database=target.dbname,
+            )
         try:
-            content = priv.read("pg_hba.conf")
+            content = priv.read(path)
             new_content, changed = append_hba_rule(content, rule)
             if changed:
-                priv.write("pg_hba.conf", new_content)
+                priv.write(path, new_content)
         except Exception as exc:  # noqa: BLE001
             return attach({"ok": False, "error": str(exc)}, info, database=target.dbname)
 
@@ -147,6 +190,7 @@ def register(mcp, ctx) -> None:
         result = {
             "ok": True,
             "file": "pg_hba.conf",
+            "path": path,
             "rule": rule,
             "changed": changed,
             "reloaded": reloaded,

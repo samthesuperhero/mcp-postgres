@@ -42,3 +42,9 @@ def test_resolve_allowed_rejects_missing_when_required(tmp_path):
     missing = tmp_path / "pg_hba.conf"
     with pytest.raises(SystemExit):
         privhelper.resolve_allowed(str(missing), must_exist=True)
+
+
+def test_resolve_allowed_rejects_relative_path():
+    # A bare basename must be refused, not silently resolved against CWD.
+    with pytest.raises(SystemExit):
+        privhelper.resolve_allowed("postgresql.conf")

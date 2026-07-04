@@ -36,6 +36,11 @@ def die(msg: str, code: int = 2) -> "NoReturn":  # type: ignore[name-defined]
 
 def resolve_allowed(path: str, must_exist: bool = True) -> str:
     """Canonicalise a path and confirm its basename is on the allowlist."""
+    # Require an absolute path up front. A relative one would be resolved against
+    # this process's CWD (``/`` under sudo), silently producing e.g.
+    # ``/postgresql.conf`` — fail loudly instead so a caller bug is obvious.
+    if not os.path.isabs(path):
+        die(f"refusing {path!r}: expected an absolute path")
     real = os.path.realpath(path)
     if os.path.basename(real) not in ALLOWED_BASENAMES:
         die(f"refusing {real!r}: basename not in allowlist {sorted(ALLOWED_BASENAMES)}")

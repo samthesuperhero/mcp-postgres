@@ -3,3 +3,4 @@
 - [Sync memory into repo](sync-memory-into-repo.md) — always mirror memory into the repo's memory/ dir in the same commit; never ask
 - [Bump version each commit](bump-version-each-commit.md) — bump pyproject.toml version before every commit; minor vs patch is my call
 - [Never commit without approval](never-commit-without-approval.md) — commit only on explicit per-commit approval; never push (user always pushes manually) — don't even offer
+- [Run tests with venv](run-tests-with-venv.md) — use .venv/Scripts/python.exe -m pytest; system python lacks mcp/mcp_postgres
