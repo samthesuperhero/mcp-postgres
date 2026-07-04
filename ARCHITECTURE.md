@@ -167,11 +167,24 @@ the service only observes it.
 Probe: query `pg_roles` (`rolsuper`, `rolcreatedb`, `rolcreaterole`) and effective read/write
 ability for the connected role via `has_*_privilege` / `current_setting`.
 
+The linear tier is driven by **superuser** and write ability only; `createdb`/`createrole` are
+**separate capabilities** (see below), so holding them does *not* make the role an admin.
+
 | Observed | Tier | Effect |
 |----------|------|--------|
 | read only | `DB_READONLY` | introspection + read queries |
 | can write DML/DDL | `DB_READWRITE` | + `execute_sql` |
-| superuser / createdb / createrole | `DB_ADMIN` | + role/db management, `admin_sql` |
+| superuser | `DB_ADMIN` | + `grant` / `revoke` / `admin_sql` |
+
+**DB capabilities (orthogonal to the tier), reported as `db_capabilities`:**
+
+| Attribute | Capability | Enables |
+|-----------|------------|---------|
+| `CREATEDB` (or superuser) | `createdb` | `create_database` |
+| `CREATEROLE` (or superuser) | `createrole` | `create_role` |
+
+So `ALTER ROLE mcp NOSUPERUSER` drops admin while `CREATEDB`/`CREATEROLE` (and all GRANTs)
+persist and still enable their own tools.
 
 ### Re-check before EVERY action
 Rights on the OS user or the `mcp` DB role can change while the daemon runs (someone adds it to
@@ -306,7 +319,9 @@ tool.
 | `describe_table` | always | Columns, types, indexes, constraints |
 | `run_read_query` | always | SELECT in a forced `READ ONLY` transaction |
 | `execute_sql` | `DB_READWRITE` | DML / DDL |
-| `create_database` / `create_role` / `grant` / `revoke` / `admin_sql` | `DB_ADMIN` | Role & database management |
+| `create_database` | `createdb` capability (or superuser) | Create databases without admin |
+| `create_role` | `createrole` capability (or superuser) | Create roles without admin |
+| `grant` / `revoke` / `admin_sql` | `DB_ADMIN` (superuser) | Privilege & administrative management |
 | `read_postgresql_conf` / `read_pg_hba_conf` | `OS_CONFIG` | Read allowlisted config files |
 | `update_postgresql_setting` / `update_pg_hba_rule` | `OS_CONFIG` | Edit (with backup) + auto reload |
 | `reload_postgresql` | `OS_CONFIG` (or `DB_ADMIN` fallback) | Reload PostgreSQL config |

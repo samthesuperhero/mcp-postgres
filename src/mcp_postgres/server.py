@@ -186,12 +186,13 @@ def build_server(
     # Probe the default (initial current) database for the startup capability log.
     current = manager.current_target()
     os_t, db_t = current.caps.os_tier(), current.caps.db_tier()
+    db_caps = current.caps.db_capabilities()
     log.info(
         "capabilities at startup: db=%s OS=%s DB=%s; enabled tools: %s",
         current.dbname,
         os_t.name,
         db_t.name,
-        ", ".join(enabled_tools_for(os_t, db_t)),
+        ", ".join(enabled_tools_for(os_t, db_t, db_caps)),
     )
     return mcp, ctx
 

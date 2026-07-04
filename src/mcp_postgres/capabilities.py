@@ -5,7 +5,11 @@ Probes two independent privilege dimensions and lets tools gate on them:
 * **OS tier**  — can ``mcp-postgres`` run the privhelper via sudo?
     ``OS_NONE`` < ``OS_CONFIG``
 * **DB tier**  — what can role ``mcp`` do inside PostgreSQL?
-    ``DB_READONLY`` < ``DB_READWRITE`` < ``DB_ADMIN``
+    ``DB_READONLY`` < ``DB_READWRITE`` < ``DB_ADMIN`` (``DB_ADMIN`` = superuser)
+* **DB capabilities** — orthogonal, attribute-driven powers that do *not* imply admin:
+    ``createdb`` (create databases) and ``createrole`` (create roles). Superuser folds
+    into both. These gate only their own tools, so a role can, say, create databases
+    without being offered ``grant``/``revoke``/``admin_sql``.
 
 Probes are cached for a few seconds so a burst of calls isn't hammered, but the
 ``guard`` re-validates before every action and emits a human-readable notice
@@ -27,6 +31,10 @@ from .docs import version
 log = logging.getLogger(__name__)
 
 
+# DB capability name -> the PostgreSQL role attribute that grants it (for remedies).
+_CAP_ATTR = {"createdb": "CREATEDB", "createrole": "CREATEROLE"}
+
+
 class OsTier(IntEnum):
     OS_NONE = 0
     OS_CONFIG = 1
@@ -46,14 +54,21 @@ class CapabilityError(Exception):
         self.notices = notices or []
 
 
-def enabled_tools_for(os_tier: OsTier, db_tier: DbTier) -> list[str]:
-    """The tools advertised as usable at the given tiers.
+def enabled_tools_for(
+    os_tier: OsTier, db_tier: DbTier, db_caps: dict | None = None
+) -> list[str]:
+    """The tools advertised as usable at the given tiers and DB capabilities.
 
     Single source of truth for the ``enabled_tools`` set: every tool is always
     *registered*, but only the ones returned here are advertised as callable right
     now. Because the DB tier is measured per database, this is recomputed against
     the current target on every report — a `use_database` switch can change it.
+
+    ``db_caps`` carries the attribute-driven capabilities (``createdb``/``createrole``)
+    that gate their own tools independently of the admin tier; it defaults to empty so
+    tier-only callers still work.
     """
+    db_caps = db_caps or {}
     tools = [
         "get_capabilities",
         "health_check",
@@ -66,8 +81,12 @@ def enabled_tools_for(os_tier: OsTier, db_tier: DbTier) -> list[str]:
     ]
     if db_tier >= DbTier.DB_READWRITE:
         tools.append("execute_sql")
+    if db_caps.get("createdb"):
+        tools.append("create_database")
+    if db_caps.get("createrole"):
+        tools.append("create_role")
     if db_tier >= DbTier.DB_ADMIN:
-        tools += ["create_database", "create_role", "grant", "revoke", "admin_sql"]
+        tools += ["grant", "revoke", "admin_sql"]
     if os_tier >= OsTier.OS_CONFIG:
         tools += [
             "read_postgresql_conf",
@@ -113,11 +132,19 @@ class CapabilityManager:
     def db_tier(self, force: bool = False) -> DbTier:
         return self.db_info(force)["tier"]
 
+    def db_capabilities(self, force: bool = False) -> dict:
+        """Attribute-driven DB capabilities (``createdb``/``createrole``).
+
+        Independent of the admin tier: a role may hold these without being an admin.
+        """
+        return self.db_info(force)["capabilities"]
+
     def _probe_db(self) -> dict:
         info: dict = {
             "tier": DbTier.DB_READONLY,
             "role": None,
             "attributes": {},
+            "capabilities": {"createdb": False, "createrole": False},
             "config_file": None,
             "hba_file": None,
             "error": None,
@@ -139,12 +166,20 @@ class CapabilityManager:
                 self.db.query_scalar("SELECT has_schema_privilege(current_user, 'public', 'CREATE')")
             )
 
-            if attrs["superuser"] or attrs["createdb"] or attrs["createrole"]:
+            # Admin is superuser only. createdb/createrole are orthogonal capabilities
+            # that gate their own tools without conferring the admin tier; superuser
+            # folds into both since it can do everything.
+            if attrs["superuser"]:
                 info["tier"] = DbTier.DB_ADMIN
             elif can_write:
                 info["tier"] = DbTier.DB_READWRITE
             else:
                 info["tier"] = DbTier.DB_READONLY
+
+            info["capabilities"] = {
+                "createdb": attrs["superuser"] or attrs["createdb"],
+                "createrole": attrs["superuser"] or attrs["createrole"],
+            }
 
             # These are visible to any role; used to locate the editable files.
             info["config_file"] = self.db.query_scalar("SELECT current_setting('config_file', true)")
@@ -169,8 +204,17 @@ class CapabilityManager:
         self._last_db = db_t
         return notices
 
-    def guard(self, os_min: OsTier | None = None, db_min: DbTier | None = None) -> list[str]:
-        """Re-probe before an action. Returns change notices, or raises CapabilityError."""
+    def guard(
+        self,
+        os_min: OsTier | None = None,
+        db_min: DbTier | None = None,
+        db_needs: tuple[str, ...] | None = None,
+    ) -> list[str]:
+        """Re-probe before an action. Returns change notices, or raises CapabilityError.
+
+        ``db_needs`` names attribute-driven DB capabilities (``createdb``/``createrole``)
+        the action requires, checked independently of the admin tier.
+        """
         notices = self._detect_changes()
         if os_min is not None:
             cur = self.os_tier()
@@ -188,6 +232,17 @@ class CapabilityManager:
                     f"(the 'mcp' role lacks the required PostgreSQL privileges)",
                     notices,
                 )
+        if db_needs:
+            caps = self.db_capabilities()
+            missing = [c for c in db_needs if not caps.get(c)]
+            if missing:
+                role = self.db_info().get("role") or "mcp"
+                attrs = " ".join(_CAP_ATTR.get(c, c.upper()) for c in missing)
+                raise CapabilityError(
+                    f"requires DB capability {', '.join(missing)}; role '{role}' lacks it "
+                    f"(grant it with: ALTER ROLE {role} {attrs}; or make the role SUPERUSER)",
+                    notices,
+                )
         return notices
 
     # -- report ---------------------------------------------------------------
@@ -203,10 +258,11 @@ class CapabilityManager:
             "db_tier": info["tier"].name,
             "connected_role": info["role"],
             "role_attributes": info["attributes"],
+            "db_capabilities": info["capabilities"],
             "config_file": info["config_file"],
             "hba_file": info["hba_file"],
             "database_error": info["error"],
             "environment": environment.probe(self.db),
-            "enabled_tools": enabled_tools_for(os_t, info["tier"]),
+            "enabled_tools": enabled_tools_for(os_t, info["tier"], info["capabilities"]),
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }

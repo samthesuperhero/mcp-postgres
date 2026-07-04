@@ -1,8 +1,13 @@
-"""Database administration tools. Require DB tier DB_ADMIN.
+"""Database administration tools.
 
-Tools are always registered so a role that gains admin rights mid-session is
-usable without a restart; the guard enforces the tier on every call, and PostgreSQL
-itself remains the final authority on every statement.
+``grant``, ``revoke`` and ``admin_sql`` require DB tier ``DB_ADMIN`` (i.e. the role is
+a superuser). ``create_database`` and ``create_role`` require only the matching role
+attribute (``CREATEDB`` / ``CREATEROLE``) — an independent capability — so they work
+without full admin.
+
+Tools are always registered so a role that gains rights mid-session is usable without a
+restart; the guard enforces the requirement on every call, and PostgreSQL itself remains
+the final authority on every statement.
 """
 
 from __future__ import annotations
@@ -22,9 +27,9 @@ def register(mcp, ctx) -> None:
         ),
     )
     def create_database(name: str, owner: str | None = None) -> dict:
-        """Create a database, optionally owned by a role. Requires DB_ADMIN."""
+        """Create a database, optionally owned by a role. Requires CREATEDB (or superuser)."""
         t = ctx.manager.current_target()
-        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
+        allowed, info = guard_or_error(t.caps, db_needs=("createdb",), database=t.dbname)
         if not allowed:
             return info
         stmt = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
@@ -49,9 +54,9 @@ def register(mcp, ctx) -> None:
         createdb: bool = False,
         createrole: bool = False,
     ) -> dict:
-        """Create a role. Requires DB_ADMIN."""
+        """Create a role. Requires CREATEROLE (or superuser)."""
         t = ctx.manager.current_target()
-        allowed, info = guard_or_error(t.caps, db_min=DbTier.DB_ADMIN, database=t.dbname)
+        allowed, info = guard_or_error(t.caps, db_needs=("createrole",), database=t.dbname)
         if not allowed:
             return info
         opts = [sql.SQL("LOGIN" if login else "NOLOGIN")]

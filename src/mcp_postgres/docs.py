@@ -49,7 +49,9 @@ CHOOSING A DATABASE
 
 PRIVILEGE TIERS (what the service is allowed to do is *measured*, not assumed)
 - DB tier:  DB_READONLY < DB_READWRITE < DB_ADMIN  (privileges of role `mcp` in the
-  current database)
+  current database; DB_ADMIN means the role is a superuser). CREATEDB and CREATEROLE are
+  *separate* capabilities: they enable `create_database` / `create_role` on their own,
+  WITHOUT conferring admin — so a role can create databases yet not run grant/revoke/admin_sql.
 - OS tier:  OS_NONE < OS_CONFIG  (whether the service may edit postgresql.conf /
   pg_hba.conf and reload PostgreSQL via sudo — cluster-global, not per database)
 Tiers are re-checked before EVERY call. A tool may be advertised but still refuse
@@ -116,8 +118,14 @@ The service **measures** what it may do, on two independent axes:
 
 | Axis | Tiers (low → high) | Meaning |
 |------|--------------------|---------|
-| DB   | `DB_READONLY` → `DB_READWRITE` → `DB_ADMIN` | privileges of role `mcp` in the current database |
+| DB   | `DB_READONLY` → `DB_READWRITE` → `DB_ADMIN` | privileges of role `mcp` in the current database; `DB_ADMIN` = superuser |
 | OS   | `OS_NONE` → `OS_CONFIG` | may the service edit `postgresql.conf`/`pg_hba.conf` and reload, via sudo |
+
+Alongside the DB tier, two attribute-driven **DB capabilities** are measured independently
+of admin and reported as `db_capabilities`: `createdb` (role attribute `CREATEDB`) and
+`createrole` (`CREATEROLE`). Each enables only its own tool (`create_database` /
+`create_role`); superuser folds into both. So a non-admin role can hold `CREATEDB` and
+create databases without being offered `grant`/`revoke`/`admin_sql`.
 
 Tiers are re-checked before every action; if they change mid-session, the affected tool
 response carries a `capability_changed` notice.
@@ -167,8 +175,11 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
 ### Requires `DB_READWRITE`
 - `execute_sql` — run a DML/DDL statement.
 
-### Requires `DB_ADMIN`
-- `create_database`, `create_role` — provision databases/roles.
+### Requires the `CREATEDB` / `CREATEROLE` capability (not admin)
+- `create_database` — needs role attribute `CREATEDB` (or superuser).
+- `create_role` — needs role attribute `CREATEROLE` (or superuser).
+
+### Requires `DB_ADMIN` (superuser)
 - `grant`, `revoke` — change privileges.
 - `admin_sql` — run an arbitrary administrative statement.
 

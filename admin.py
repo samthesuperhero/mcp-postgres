@@ -223,9 +223,12 @@ def print_state(label: str, os_info: dict, db: dict) -> None:
         f" createrole={_yn(db['rolcreaterole'])})"
     )
     if not db["rolsuper"] and (db["rolcreatedb"] or db["rolcreaterole"]):
-        warn(
-            "role has createdb/createrole set without superuser -- the service "
-            "still reports DB_ADMIN (see capabilities.py); this tool only toggles SUPERUSER"
+        extra = ", ".join(
+            n for n, on in (("createdb", db["rolcreatedb"]), ("createrole", db["rolcreaterole"])) if on
+        )
+        info(
+            f"    note: admin (superuser) is OFF but {extra} remains -- by design the service "
+            "still offers create_database/create_role, but not grant/revoke/admin_sql"
         )
 
 

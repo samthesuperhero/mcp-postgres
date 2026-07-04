@@ -54,7 +54,7 @@ class _StubCaps:
         self._db_info = db_info
         self.allow = allow
 
-    def guard(self, os_min=None, db_min=None):
+    def guard(self, os_min=None, db_min=None, db_needs=None):
         if not self.allow:
             raise CapabilityError("denied", [])
         return []

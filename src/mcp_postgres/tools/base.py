@@ -9,6 +9,7 @@ def guard_or_error(
     caps: CapabilityManager,
     os_min: OsTier | None = None,
     db_min: DbTier | None = None,
+    db_needs: tuple[str, ...] | None = None,
     database: str | None = None,
 ):
     """Run the capability guard.
@@ -18,9 +19,12 @@ def guard_or_error(
     when it is refused — the error dict still carries any change notices so the
     caller is informed its privileges shifted, and the current ``database`` so it
     always knows which target the refusal applies to.
+
+    ``db_needs`` names attribute-driven DB capabilities (``createdb``/``createrole``)
+    the action requires, independent of the admin tier.
     """
     try:
-        notices = caps.guard(os_min=os_min, db_min=db_min)
+        notices = caps.guard(os_min=os_min, db_min=db_min, db_needs=db_needs)
         return True, notices
     except CapabilityError as exc:
         err = {"ok": False, "error": str(exc), "capability_changed": exc.notices}

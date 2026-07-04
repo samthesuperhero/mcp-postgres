@@ -28,7 +28,10 @@ Tools are **capability-gated** — the agent sees only what the current privileg
 - **Always:** pick the target database (`use_database`), inspect databases/schemas/tables, run
   read-only `SELECT` queries, and read the live capability report.
 - **If role `mcp` can write:** run DML/DDL.
-- **If role `mcp` is admin:** manage roles and databases.
+- **If role `mcp` has `CREATEDB` / `CREATEROLE`:** create databases / roles — these are
+  independent capabilities, so the service can do them *without* being an admin.
+- **If role `mcp` is a superuser (admin):** change privileges (`grant`/`revoke`) and run
+  arbitrary administrative SQL.
 - **If `mcp-postgres` has sudo:** read/edit `postgresql.conf` & `pg_hba.conf` and reload
   PostgreSQL.
 
@@ -99,6 +102,18 @@ sudo -u postgres psql -c "CREATE ROLE mcp LOGIN PASSWORD 'CHANGE_ME';"
 ```
 Or let the installer do it by adding `--create-db-role` in step 2 (requires the running user to
 have `postgres` superuser access).
+
+**Admin is superuser; other powers are separate.** The service treats role `mcp` as an admin
+only when it is a `SUPERUSER`. `CREATEDB` and `CREATEROLE` are independent capabilities that
+enable `create_database` / `create_role` *without* admin. Toggle admin non-destructively — it
+never touches the other attributes or any GRANTs:
+```bash
+sudo -u postgres psql -c "ALTER ROLE mcp CREATEDB;"      # can create DBs, still not admin
+sudo -u postgres psql -c "ALTER ROLE mcp SUPERUSER;"     # enable admin
+sudo -u postgres psql -c "ALTER ROLE mcp NOSUPERUSER;"   # disable admin (CREATEDB persists)
+```
+Or use the bundled toggle (flips OS + DB admin together): `sudo mcp-postgres/admin`
+(`--status` to report only).
 
 ### 4. Connect an agent
 Hand the agent the endpoint URL and the bearer token — see
