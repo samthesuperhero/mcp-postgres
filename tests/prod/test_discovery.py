@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp_postgres import docs
 from mcp_postgres.capabilities import DbTier, OsTier, enabled_tools_for
-from mcp_postgres.tools import admin, config_files, discovery, introspection, query
+from mcp_postgres.tools import admin, config_files, discovery, introspection, query, schema
 
 
 class _StubCaps:
@@ -59,7 +59,7 @@ class _StubCtx:
 def _build() -> FastMCP:
     mcp = FastMCP("mcp-postgres-test")
     ctx = _StubCtx()
-    for mod in (introspection, query, admin, config_files, discovery):
+    for mod in (introspection, schema, query, admin, config_files, discovery):
         mod.register(mcp, ctx)
     return mcp
 
@@ -72,11 +72,19 @@ READ_ONLY = {
     "list_schemas",
     "list_tables",
     "describe_table",
+    "list_foreign_keys",
+    "list_indexes",
+    "list_views",
+    "list_functions",
+    "list_enums",
+    "get_object_definition",
     "run_read_query",
+    "explain_query",
+    "sample_table",
     "read_postgresql_conf",
     "read_pg_hba_conf",
 }
-DESTRUCTIVE = {"execute_sql", "admin_sql", "revoke"}
+DESTRUCTIVE = {"execute_sql", "execute_batch", "admin_sql", "revoke"}
 
 
 def test_instructions_and_guide_are_populated():

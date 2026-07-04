@@ -50,9 +50,19 @@ def attach(result: dict, notices: list[str], database: str | None = None) -> dic
 
 
 def cell(value):
-    """Coerce a DB cell into a JSON-friendly value."""
+    """Coerce a DB cell into a JSON-friendly value.
+
+    Scalars pass through; lists/tuples and dicts are coerced *recursively* so array
+    columns (e.g. an index's column list, an enum's labels) and composite/JSON values
+    survive as real JSON arrays/objects instead of being stringified. Anything else
+    (dates, Decimals, UUIDs, …) falls back to ``str()``.
+    """
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if isinstance(value, (list, tuple)):
+        return [cell(v) for v in value]
+    if isinstance(value, dict):
+        return {k: cell(v) for k, v in value.items()}
     return str(value)
 
 

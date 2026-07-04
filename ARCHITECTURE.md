@@ -316,9 +316,14 @@ tool.
 | `get_capabilities` | always | Full capability report (§5) |
 | `health_check` | always | Service up + DB reachable |
 | `list_databases` / `list_schemas` / `list_tables` | always | Introspection |
-| `describe_table` | always | Columns, types, indexes, constraints |
-| `run_read_query` | always | SELECT in a forced `READ ONLY` transaction |
-| `execute_sql` | `DB_READWRITE` | DML / DDL |
+| `describe_table` | always | Columns, PK, indexes, foreign keys (both directions), unique/check constraints, comment, approx row count & size |
+| `list_foreign_keys` / `list_indexes` / `list_views` / `list_functions` / `list_enums` | always | Schema-wide introspection (relationship map, indexes, views, routines, enum labels) |
+| `get_object_definition` | always | DDL for a view / materialized view / index / function |
+| `run_read_query` | always | SELECT in a forced `READ ONLY` transaction (bounded by `statement_timeout`) |
+| `explain_query` | always | Query plan; `analyze=True` executes inside the rolled-back READ ONLY txn |
+| `sample_table` | always | Preview the first N rows of a table/view |
+| `execute_sql` | `DB_READWRITE` | DML / DDL (single statement) |
+| `execute_batch` | `DB_READWRITE` | Several statements in one transaction, atomic by default |
 | `create_database` | `createdb` capability (or superuser) | Create databases without admin |
 | `create_role` | `createrole` capability (or superuser) | Create roles without admin |
 | `grant` / `revoke` / `admin_sql` | `DB_ADMIN` (superuser) | Privilege & administrative management |

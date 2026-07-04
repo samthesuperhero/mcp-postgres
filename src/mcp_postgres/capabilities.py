@@ -77,10 +77,18 @@ def enabled_tools_for(
         "list_schemas",
         "list_tables",
         "describe_table",
+        "list_foreign_keys",
+        "list_indexes",
+        "list_views",
+        "list_functions",
+        "list_enums",
+        "get_object_definition",
         "run_read_query",
+        "explain_query",
+        "sample_table",
     ]
     if db_tier >= DbTier.DB_READWRITE:
-        tools.append("execute_sql")
+        tools += ["execute_sql", "execute_batch"]
     if db_caps.get("createdb"):
         tools.append("create_database")
     if db_caps.get("createrole"):

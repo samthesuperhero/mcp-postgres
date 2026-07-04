@@ -27,7 +27,7 @@ from .manager import DatabaseManager
 from .oauth import OAuthStore, PostgresOAuthProvider
 from .oauth.login import register_login_routes
 from .privclient import PrivClient
-from .tools import admin, config_files, discovery, introspection, query
+from .tools import admin, config_files, discovery, introspection, query, schema
 
 log = logging.getLogger("mcp_postgres")
 
@@ -174,6 +174,7 @@ def build_server(
     )
 
     introspection.register(mcp, ctx)
+    schema.register(mcp, ctx)
     query.register(mcp, ctx)
     admin.register(mcp, ctx)
     config_files.register(mcp, ctx)

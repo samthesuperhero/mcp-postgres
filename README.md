@@ -25,9 +25,13 @@ result names the `database` it came from.
 
 Tools are **capability-gated** — the agent sees only what the current privileges allow:
 
-- **Always:** pick the target database (`use_database`), inspect databases/schemas/tables, run
-  read-only `SELECT` queries, and read the live capability report.
-- **If role `mcp` can write:** run DML/DDL.
+- **Always:** pick the target database (`use_database`), inspect databases/schemas/tables
+  (rich `describe_table` with indexes, foreign keys, constraints & size; plus
+  `list_foreign_keys`, `list_indexes`, `list_views`, `list_functions`, `list_enums`,
+  `get_object_definition`), run read-only `SELECT` queries (bounded by a `statement_timeout`),
+  `explain_query` a plan, `sample_table` for a quick preview, and read the live capability report.
+- **If role `mcp` can write:** run DML/DDL (`execute_sql`), or several statements atomically in
+  one transaction (`execute_batch`).
 - **If role `mcp` has `CREATEDB` / `CREATEROLE`:** create databases / roles — these are
   independent capabilities, so the service can do them *without* being an admin.
 - **If role `mcp` is a superuser (admin):** change privileges (`grant`/`revoke`) and run

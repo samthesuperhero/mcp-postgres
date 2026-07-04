@@ -66,8 +66,11 @@ RESULT ENVELOPE (every tool returns a JSON object)
   `get_capabilities`.
 
 SAFETY
-- `run_read_query` always runs inside a forced READ ONLY transaction — safe even if
-  role `mcp` can write.
+- `run_read_query` always runs inside a forced READ ONLY transaction (with a
+  `statement_timeout`) — safe even if role `mcp` can write. `explain_query` and
+  `sample_table` share that read-only path; `explain_query(analyze=True)` executes but
+  rolls back, so it never mutates. Use `execute_batch` for all-or-nothing multi-statement
+  changes instead of several `execute_sql` calls.
 - Mutating, admin, and config-file tools carry MCP annotations (readOnly / destructive
   / idempotent hints); prefer read-only tools unless a change is intended.
 - Config-file edits go through a two-file allowlist and always write a timestamped
@@ -167,13 +170,28 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
 - `health_check` — service up and the current database reachable.
 - `use_database` — switch the current target database (same cluster, role `mcp`); returns
   the new database's capability report.
-- `list_databases`, `list_schemas`, `list_tables`, `describe_table` — read-only introspection
+- `list_databases`, `list_schemas`, `list_tables` — read-only introspection
   (`list_databases` also enumerates the names `use_database` accepts).
+- `describe_table` — full picture of one table/view: columns (type, nullability, default,
+  identity, comment), primary key, `indexes`, outbound `foreign_keys` and inbound
+  `referenced_by`, `unique_constraints`/`check_constraints`, table comment, approximate row
+  count and total size.
+- `list_foreign_keys` — every FK relationship in a schema (the JOIN map) in one call.
+- `list_indexes` — indexes in a schema (or on one table): columns, uniqueness, method, size.
+- `list_views` — views and materialized views (optionally with their `SELECT` definition).
+- `list_functions` — functions/procedures with signature, return type, and language.
+- `list_enums` — enum types with their labels (the valid values), in order.
+- `get_object_definition` — DDL for a `view`/`materialized_view`/`index`/`function`.
 - `run_read_query` — run a `SELECT`/read in a forced **READ ONLY** transaction (safe even
-  when role `mcp` can write).
+  when role `mcp` can write); `timeout_ms` bounds it (default 30s).
+- `explain_query` — the query plan (optionally `analyze=True`, executed then rolled back);
+  `format` `text` or `json`.
+- `sample_table` — preview the first N rows of a table/view.
 
 ### Requires `DB_READWRITE`
-- `execute_sql` — run a DML/DDL statement.
+- `execute_sql` — run a single DML/DDL statement.
+- `execute_batch` — run several statements in one transaction, atomic by default
+  (`stop_on_error`); nothing is applied if any statement fails.
 
 ### Requires the `CREATEDB` / `CREATEROLE` capability (not admin)
 - `create_database` — needs role attribute `CREATEDB` (or superuser).
