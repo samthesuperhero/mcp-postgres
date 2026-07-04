@@ -48,7 +48,12 @@ class FakeCursor:
     def execute(self, sql, params=None):
         s = sql if isinstance(sql, str) else str(sql)
         self.executed.append((s, params))
-        if s not in _CONTROL and not s.startswith("SET LOCAL") and s in self.fail_on:
+        # PostgreSQL rejects bind parameters in a SET command (``SET ... = $1`` is a
+        # syntax error): the timeout must be applied with ``set_config(...)`` instead.
+        # Model that here so a regression back to the parameterised SET is caught offline.
+        if s.strip().upper().startswith("SET ") and params:
+            raise RuntimeError('syntax error at or near "$1"')
+        if s not in _CONTROL and s in self.fail_on:
             raise RuntimeError(f"boom: {s}")
         self.description = self.description_for(s)
         self._rows = self.fetch.get(s, [])
@@ -168,19 +173,22 @@ def test_run_read_query_sets_statement_timeout():
     cols, rows, truncated = _db(cur).run_read_query(q, timeout_ms=500)
     assert cols == ["?column?"]
     assert rows == [(1,)] and truncated is False
-    timeout = [(s, p) for s, p in cur.executed if s.startswith("SET LOCAL statement_timeout")]
-    assert timeout and timeout[0][1] == (500,)
+    # Applied via set_config (a function that takes bind params), NOT a parameterised
+    # SET — the value is passed as a millisecond string.
+    timeout = [(s, p) for s, p in cur.executed if "set_config('statement_timeout'" in s]
+    assert timeout and timeout[0][1] == ("500",)
+    assert not any(s.strip().upper().startswith("SET ") for s, _ in cur.executed)
     assert cur.executed[0][0] == "BEGIN READ ONLY"
     assert cur.executed[-1][0] == "ROLLBACK"
 
 
-def test_run_read_query_without_timeout_omits_set_local():
+def test_run_read_query_without_timeout_omits_statement_timeout():
     q = "SELECT 1"
     cur = FakeCursor(
         fetch={q: [(1,)]}, description_for=lambda s: [Col("?column?")] if s == q else None
     )
     _db(cur).run_read_query(q, timeout_ms=None)
-    assert not any(s.startswith("SET LOCAL statement_timeout") for s, _ in cur.executed)
+    assert not any("statement_timeout" in s for s, _ in cur.executed)
 
 
 # -- cell() coercion -----------------------------------------------------------

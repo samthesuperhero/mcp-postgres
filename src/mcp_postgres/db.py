@@ -18,6 +18,20 @@ from .config import DatabaseConfig
 log = logging.getLogger(__name__)
 
 
+def _set_statement_timeout(cur, timeout_ms: int) -> None:
+    """Bound the current transaction's statements with ``statement_timeout``.
+
+    Uses ``set_config('statement_timeout', <ms>, is_local => true)`` rather than
+    ``SET LOCAL statement_timeout = <ms>``: the ``SET`` command does not accept
+    bind parameters (``SET ... = $1`` is a syntax error in PostgreSQL), so the
+    parameterised form silently broke every timed read path. ``set_config`` is an
+    ordinary function that *does* take parameters, and ``is_local => true`` gives
+    the same transaction-local scope as ``SET LOCAL``. The value is text; a bare
+    integer string is interpreted as milliseconds.
+    """
+    cur.execute("SELECT set_config('statement_timeout', %s, true)", (str(int(timeout_ms)),))
+
+
 class Database:
     def __init__(self, dbcfg: DatabaseConfig):
         self.cfg = dbcfg
@@ -77,7 +91,7 @@ class Database:
             cur.execute("BEGIN READ ONLY")
             try:
                 if timeout_ms is not None:
-                    cur.execute("SET LOCAL statement_timeout = %s", (int(timeout_ms),))
+                    _set_statement_timeout(cur, timeout_ms)
                 cur.execute(sql, params)
                 if cur.description:
                     cols = [d.name for d in cur.description]
@@ -112,7 +126,7 @@ class Database:
             cur.execute("BEGIN READ ONLY")
             try:
                 if timeout_ms is not None:
-                    cur.execute("SET LOCAL statement_timeout = %s", (int(timeout_ms),))
+                    _set_statement_timeout(cur, timeout_ms)
                 cur.execute(prefixed, params)
                 rows = cur.fetchall()
             finally:
