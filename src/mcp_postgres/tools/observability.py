@@ -29,6 +29,18 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 _MAX_ACTIVITY_ROWS = 1000
 
 
+def _like_prefix(value: str) -> str:
+    """Build a LIKE pattern matching ``value`` as a LITERAL prefix.
+
+    Escapes LIKE's metacharacters (``\\`` ``%`` ``_``) so e.g. ``get_settings(name="log_")``
+    returns settings starting with the literal ``log_`` — not ``log`` followed by any single
+    character (which would also match ``logging_collector``). Relies on LIKE's default
+    backslash escape, and the value is passed as a bind parameter, not spliced into the SQL.
+    """
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
 def _signal_backend(t, info, pid: int, func: str) -> dict:
     """Run ``pg_cancel_backend``/``pg_terminate_backend`` for ``pid``, refusing self.
 
@@ -172,7 +184,7 @@ def register(mcp, ctx) -> None:
             "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE c.relkind IN ('r', 'p', 'm') "
             "  AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
-            "  AND n.nspname NOT LIKE 'pg_toast%' "
+            "  AND n.nspname NOT LIKE 'pg_toast%%' "
             "ORDER BY pg_total_relation_size(c.oid) DESC LIMIT %s",
             [n],
         )
@@ -204,7 +216,7 @@ def register(mcp, ctx) -> None:
         clauses, params = [], []
         if name:
             clauses.append("(name = %s OR name LIKE %s)")
-            params += [name, name + "%"]
+            params += [name, _like_prefix(name)]
         if category:
             clauses.append("category ILIKE %s")
             params.append(category)

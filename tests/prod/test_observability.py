@@ -8,7 +8,8 @@ without a live cluster (the live cancel/terminate paths are exercised in
 
 from types import SimpleNamespace
 
-from mcp_postgres.tools.observability import _signal_backend
+from mcp_postgres.tools import observability
+from mcp_postgres.tools.observability import _like_prefix, _signal_backend
 
 
 class _FakeDb:
@@ -57,3 +58,80 @@ def test_signal_backend_stamps_database_and_notices():
     res = _signal_backend(_target(own_pid=1), ["DB tier changed"], 2, "pg_cancel_backend")
     assert res["database"] == "db"
     assert res["capability_changed"] == ["DB tier changed"]
+
+
+# -- LIKE-prefix escaping (get_settings) ---------------------------------------
+
+
+def test_like_prefix_escapes_metacharacters():
+    # A trailing '_' must match literally, not as LIKE's single-char wildcard.
+    assert _like_prefix("log_") == "log\\_%"
+    assert _like_prefix("a%b") == "a\\%b%"
+    assert _like_prefix("c\\d") == "c\\\\d%"
+
+
+# -- placeholder-safety of the read-tool queries (offline regression) ----------
+#
+# psycopg3 rejects a query carrying bind params if it contains any '%' that isn't a
+# %s/%b/%t placeholder or a literal '%%'. A literal '%' in the SQL (e.g. 'pg_toast%')
+# next to a real placeholder therefore raises on the live cluster only. This fake db
+# models that rule so the same mistake is caught on a DB-less dev host.
+
+
+class _PlaceholderCheckingDb:
+    @staticmethod
+    def _check(sql, params):
+        if not params:
+            return  # psycopg does no %-parsing when params is None/empty
+        probe = sql.replace("%%", "")
+        for ph in ("%s", "%b", "%t"):
+            probe = probe.replace(ph, "")
+        if "%" in probe:
+            raise AssertionError(f"illegal bare '%' with params in SQL: {sql!r}")
+
+    def select(self, sql, params=None):
+        self._check(sql, params)
+        return [], []
+
+    def query_scalar(self, sql, params=None):
+        self._check(sql, params)
+        return 0
+
+    def query_one(self, sql, params=None):
+        self._check(sql, params)
+        return {}
+
+
+class _AllowCaps:
+    def guard(self, os_min=None, db_min=None, db_needs=None):
+        return []
+
+
+class _CapturingMCP:
+    def __init__(self):
+        self.tools: dict = {}
+
+    def tool(self, *args, **kwargs):
+        def deco(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return deco
+
+
+def _obs_tools():
+    target = SimpleNamespace(db=_PlaceholderCheckingDb(), caps=_AllowCaps(), dbname="testdb")
+    ctx = SimpleNamespace(manager=SimpleNamespace(current_target=lambda: target))
+    mcp = _CapturingMCP()
+    observability.register(mcp, ctx)
+    return mcp.tools
+
+
+def test_read_tool_queries_use_legal_placeholders():
+    tools = _obs_tools()
+    assert tools["server_activity"]()["ok"] is True
+    assert tools["list_locks"]()["ok"] is True
+    assert tools["database_stats"]()["ok"] is True  # regresses the 'pg_toast%' bug
+    assert tools["get_settings"]()["ok"] is True
+    assert tools["get_settings"](name="log_")["ok"] is True
+    assert tools["get_settings"](name="shared_buffers", category="Resource Usage")["ok"] is True
