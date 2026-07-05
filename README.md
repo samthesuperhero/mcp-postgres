@@ -291,6 +291,37 @@ before any edit. Some `postgresql.conf` settings need a **PostgreSQL restart** (
 reload) to take effect — the service flags these to the agent but never restarts PostgreSQL on
 its own.
 
+### Running the test suite on the host
+
+Beyond the quick `mcp-postgres-selftest`, the repo ships a full `pytest` suite whose live tests
+exercise the **real database and the running service** (`tests/prod/test_live_*.py`). Run it on
+the deployment host with one command from the repo directory:
+```bash
+sudo mcp-postgres/run-tests                  # full tests/prod suite, as the mcp-postgres user
+sudo mcp-postgres/run-tests -k "not write"   # read-only subset (never writes to the DB)
+sudo mcp-postgres/run-tests -v               # any extra args are forwarded to pytest
+```
+`mcp-postgres/run-tests` is the committed launcher for `run_tests.py`. It adds `pytest` to the
+venv if missing (the installer doesn't), then runs the suite **as `mcp-postgres`** — the same
+user the service runs as, so `load_config()` reads the real `/etc/mcp-postgres` secrets and the
+tests see exactly what the service sees. Tests whose resource isn't reachable skip themselves,
+so a partial environment is fine.
+
+- **Deploy first.** The `test_live_service_*` tests drive the *running* service over HTTP, so
+  run `sudo mcp-postgres/update` beforehand to be sure the service is on the code you're testing.
+- **Write coverage.** When role `mcp` can write, the write tests create and drop an isolated
+  `mcp_prodtest` schema (always cleaned up), and auto-skip for a read-only role. Exclude them
+  with `-k "not write"` or `--ignore=tests/prod/test_live_write_tools.py`.
+- Pass `--root` to run in place as root instead of the service user (simpler where the checkout
+  is root-readable; the reported OS tier then reflects root, not the service).
+
+Prefer to run it by hand? The launcher is equivalent to:
+```bash
+sudo /opt/mcp-postgres/venv/bin/pip install "pytest>=8.0"
+sudo -u mcp-postgres /opt/mcp-postgres/venv/bin/python -m pytest \
+  <checkout>/tests/prod -q     # the checkout must be readable by the mcp-postgres user
+```
+
 ---
 
 ## License
