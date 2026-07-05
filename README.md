@@ -30,12 +30,16 @@ Tools are **capability-gated** — the agent sees only what the current privileg
   `list_foreign_keys`, `list_indexes`, `list_views`, `list_functions`, `list_enums`,
   `get_object_definition`), run read-only `SELECT` queries (bounded by a `statement_timeout`),
   `explain_query` a plan, `sample_table` for a quick preview, and read the live capability report.
+- **Observe a live cluster (always):** `server_activity` (what's running now), `list_locks`
+  (blocking chains), `database_stats` (size + cache-hit ratio + biggest tables), and
+  `get_settings` (effective `pg_settings` — no sudo needed).
 - **If role `mcp` can write:** run DML/DDL (`execute_sql`), or several statements atomically in
   one transaction (`execute_batch`).
 - **If role `mcp` has `CREATEDB` / `CREATEROLE`:** create databases / roles — these are
   independent capabilities, so the service can do them *without* being an admin.
-- **If role `mcp` is a superuser (admin):** change privileges (`grant`/`revoke`) and run
-  arbitrary administrative SQL.
+- **If role `mcp` is a superuser (admin):** change privileges (`grant`/`revoke`), run
+  arbitrary administrative SQL, and stop a runaway backend by pid (`cancel_query` /
+  `terminate_backend`).
 - **If `mcp-postgres` has sudo:** read/edit `postgresql.conf` & `pg_hba.conf` and reload
   PostgreSQL.
 
@@ -43,10 +47,13 @@ Privileges are re-checked before every action, so the agent is told immediately 
 change while running.
 
 The server is **self-describing**: on connect it returns MCP `instructions` (an overview, the
-tier model, and the result envelope), every tool carries safety annotations, and two resources
-are published — `docs://mcp-postgres/guide` (full capability guide) and `capabilities://current`
-(the live report). An agent can learn what it may do without any prior knowledge — start by
-calling `get_capabilities`.
+tier model, and the result envelope), every tool carries safety annotations, and three resources
+are published — `docs://mcp-postgres/guide` (full capability guide), `capabilities://current`
+(the live report), and `schema://current` (a compact map of the current database — schemas,
+tables/views with columns, primary keys, FK edges, and enums). It also offers guided **prompts**
+(`audit_privileges`, `add_column_safely`, `investigate_slow_query`) that walk an agent through
+common tasks. An agent can learn what it may do without any prior knowledge — start by calling
+`get_capabilities`.
 
 ---
 

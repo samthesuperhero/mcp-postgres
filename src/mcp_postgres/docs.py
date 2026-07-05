@@ -18,6 +18,7 @@ REPO_URL = "https://github.com/samthesuperhero/mcp-postgres"
 
 GUIDE_URI = "docs://mcp-postgres/guide"
 CAPABILITIES_URI = "capabilities://current"
+SCHEMA_URI = "schema://current"
 
 
 def version() -> str | None:
@@ -39,6 +40,11 @@ START HERE
   `enabled_tools` you may use right now, and an `environment` block describing what you
   are actually talking to — the PostgreSQL version, the extensions (activated / available
   / preloaded), and the host OS. For the full catalog and semantics, read `{GUIDE_URI}`.
+- To grasp the whole database at once, read the `{SCHEMA_URI}` resource — a compact map of
+  every schema (tables/views with columns, primary keys, FK edges, enums) — instead of many
+  `describe_table` calls; then drill in with `describe_table` where you need full detail.
+- For common tasks the server offers guided **prompts** (recipes): `audit_privileges`,
+  `add_column_safely`, and `investigate_slow_query` walk you through the right tools in order.
 
 CHOOSING A DATABASE
 - Everything acts on the current target database (`database` in every result).
@@ -75,6 +81,14 @@ SAFETY
   / idempotent hints); prefer read-only tools unless a change is intended.
 - Config-file edits go through a two-file allowlist and always write a timestamped
   backup; some settings need a full PostgreSQL restart (flagged, never done for you).
+
+OBSERVABILITY & OPS
+- `server_activity`, `list_locks`, `database_stats`, and `get_settings` are read-only
+  windows into a live cluster — what's running now, which backends block which, per-DB
+  size/cache stats, and the effective `pg_settings` (config visibility with NO OS tier
+  required). At DB_ADMIN, `cancel_query` (gentle: cancels the running statement) and
+  `terminate_backend` (forceful: drops the connection) stop a runaway backend by pid,
+  which you read from `server_activity` / `list_locks`.
 
 STAY WITHIN THESE TOOLS
 - Manage PostgreSQL only through the tools `get_capabilities` lists, each for its stated
@@ -188,6 +202,16 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
   `format` `text` or `json`.
 - `sample_table` — preview the first N rows of a table/view.
 
+### Observability (always available, read-only)
+- `server_activity` — live backends from `pg_stat_activity` (pid, user, state, wait event,
+  query runtime, query text); hides idle sessions and scopes to the current DB by default.
+- `list_locks` — blocking chains via `pg_blocking_pids()`: who is blocked by whom, with both
+  queries. Empty when nothing is waiting.
+- `database_stats` — current-DB size, `pg_stat_database` counters (with a computed
+  `cache_hit_ratio`), and the largest tables by total size.
+- `get_settings` — effective configuration from `pg_settings` (filter by `name` prefix or
+  `category`). Read-only config visibility that needs **no** `OS_CONFIG` tier.
+
 ### Requires `DB_READWRITE`
 - `execute_sql` — run a single DML/DDL statement.
 - `execute_batch` — run several statements in one transaction, atomic by default
@@ -200,12 +224,38 @@ The PostgreSQL version and OS are fixed for the process; `extensions.activated` 
 ### Requires `DB_ADMIN` (superuser)
 - `grant`, `revoke` — change privileges.
 - `admin_sql` — run an arbitrary administrative statement.
+- `cancel_query` — cancel the statement a backend is running (`pg_cancel_backend`, gentle).
+- `terminate_backend` — drop a backend connection (`pg_terminate_backend`, forceful). Both
+  take a `pid` from `server_activity` / `list_locks` and refuse to signal the service itself.
 
 ### Requires `OS_CONFIG` (sudo to the privhelper)
 - `read_postgresql_conf`, `read_pg_hba_conf` — read the two allowlisted config files.
 - `update_postgresql_setting` — set a `postgresql.conf` parameter (backup + reload).
 - `update_pg_hba_rule` — append a `pg_hba.conf` rule (backup + reload).
 - `reload_postgresql` — reload PostgreSQL config (also allowed via `DB_ADMIN` fallback).
+
+## Resources
+
+Alongside the tools, three MCP resources support discovery:
+
+- `{GUIDE_URI}` — this guide.
+- `{CAPABILITIES_URI}` — the live capability report (same payload as `get_capabilities`).
+- `{SCHEMA_URI}` — a compact structural map of the **current** database: every non-system
+  schema with its tables/views (columns, primary key, foreign-key edges) and enum types. Read
+  it once to orient before writing SQL, then `describe_table` for full per-relation detail. It
+  reflects the current target and changes when you `use_database`.
+
+## Guided recipes (prompts)
+
+The server publishes MCP **prompts** — parameterized recipes that drive these tools through a
+task step by step:
+
+- `audit_privileges(role?)` — a read-only review of who can read/write/own what in the current
+  database (roles, memberships, table grants), ending with proposed GRANT/REVOKE.
+- `add_column_safely(table, column, column_type, default?, not_null?)` — inspect the table, then
+  apply an atomic `ALTER TABLE` via `execute_batch`, with lock/rewrite cautions for large tables.
+- `investigate_slow_query(query)` — `explain_query` the plan, check indexes and stats, and look
+  for live contention with `server_activity` / `list_locks`.
 
 ## Operational notes
 

@@ -86,6 +86,10 @@ def enabled_tools_for(
         "run_read_query",
         "explain_query",
         "sample_table",
+        "server_activity",
+        "list_locks",
+        "database_stats",
+        "get_settings",
     ]
     if db_tier >= DbTier.DB_READWRITE:
         tools += ["execute_sql", "execute_batch"]
@@ -94,7 +98,7 @@ def enabled_tools_for(
     if db_caps.get("createrole"):
         tools.append("create_role")
     if db_tier >= DbTier.DB_ADMIN:
-        tools += ["grant", "revoke", "admin_sql"]
+        tools += ["grant", "revoke", "admin_sql", "cancel_query", "terminate_backend"]
     if os_tier >= OsTier.OS_CONFIG:
         tools += [
             "read_postgresql_conf",

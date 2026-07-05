@@ -4,3 +4,4 @@
 - [Bump version each commit](bump-version-each-commit.md) — bump pyproject.toml version before every commit; minor vs patch is my call
 - [Never commit without approval](never-commit-without-approval.md) — commit only on explicit per-commit approval; never push (user always pushes manually) — don't even offer
 - [Run tests with venv](run-tests-with-venv.md) — use .venv/Scripts/python.exe -m pytest; system python lacks mcp/mcp_postgres
+- [mcp-postgres roadmap](mcp-postgres-roadmap.md) — Phase 1 (v0.9.0), Phase 2 obs/ops (v0.10.0), Phase 3 prompts+schema (v0.11.0); Phase 4 out of scope; backlog: trim extensions.available

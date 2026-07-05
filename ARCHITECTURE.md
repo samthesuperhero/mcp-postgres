@@ -322,17 +322,31 @@ tool.
 | `run_read_query` | always | SELECT in a forced `READ ONLY` transaction (bounded by `statement_timeout`) |
 | `explain_query` | always | Query plan; `analyze=True` executes inside the rolled-back READ ONLY txn |
 | `sample_table` | always | Preview the first N rows of a table/view |
+| `server_activity` | always | Live backends from `pg_stat_activity` (state, wait event, runtime, query) |
+| `list_locks` | always | Blocking chains via `pg_blocking_pids()` — who blocks whom |
+| `database_stats` | always | Current-DB size, `pg_stat_database` counters (+ cache-hit ratio), largest tables |
+| `get_settings` | always | Effective config from `pg_settings` (read-only; no `OS_CONFIG` needed) |
 | `execute_sql` | `DB_READWRITE` | DML / DDL (single statement) |
 | `execute_batch` | `DB_READWRITE` | Several statements in one transaction, atomic by default |
 | `create_database` | `createdb` capability (or superuser) | Create databases without admin |
 | `create_role` | `createrole` capability (or superuser) | Create roles without admin |
 | `grant` / `revoke` / `admin_sql` | `DB_ADMIN` (superuser) | Privilege & administrative management |
+| `cancel_query` / `terminate_backend` | `DB_ADMIN` (superuser) | Signal a backend by pid — cancel its query (gentle) or drop the connection (forceful) |
 | `read_postgresql_conf` / `read_pg_hba_conf` | `OS_CONFIG` | Read allowlisted config files |
 | `update_postgresql_setting` / `update_pg_hba_rule` | `OS_CONFIG` | Edit (with backup) + auto reload |
 | `reload_postgresql` | `OS_CONFIG` (or `DB_ADMIN` fallback) | Reload PostgreSQL config |
 
 `run_read_query` enforces read-only at the transaction level (`SET TRANSACTION READ ONLY`), so
 it stays safe even when the role could otherwise write.
+
+### Prompts & resources (discovery)
+
+Beyond tools, the server publishes MCP **resources** — `docs://mcp-postgres/guide`,
+`capabilities://current`, and `schema://current` (a compact map of the current database:
+schemas → tables/views with columns, primary keys, FK edges, and enums) — and guided
+**prompts** (`audit_privileges`, `add_column_safely`, `investigate_slow_query`) that walk an
+agent through common tasks using the tools above. Prompts add no privileges; every step they
+suggest still routes through a capability-gated tool.
 
 ---
 

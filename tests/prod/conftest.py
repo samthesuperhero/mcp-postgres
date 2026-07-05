@@ -38,6 +38,8 @@ from mcp_postgres.tools import (
     config_files,
     discovery,
     introspection,
+    observability,
+    prompts,
     query,
     schema,
 )
@@ -59,6 +61,7 @@ class CapturingMCP:
     def __init__(self):
         self.tools: dict = {}
         self.resources: dict = {}
+        self.prompts: dict = {}
 
     def tool(self, *args, **kwargs):
         def deco(fn):
@@ -72,6 +75,15 @@ class CapturingMCP:
 
         def deco(fn):
             self.resources[name] = fn
+            return fn
+
+        return deco
+
+    def prompt(self, *args, **kwargs):
+        name = kwargs.get("name")
+
+        def deco(fn):
+            self.prompts[name or fn.__name__] = fn
             return fn
 
         return deco
@@ -123,7 +135,16 @@ def app(cfg, _live):
     manager = DatabaseManager(cfg.database, priv)
     ctx = AppContext(config=cfg, manager=manager, priv=priv)
     mcp = CapturingMCP()
-    for mod in (introspection, schema, query, admin, config_files, discovery):
+    for mod in (
+        introspection,
+        schema,
+        query,
+        observability,
+        admin,
+        config_files,
+        discovery,
+        prompts,
+    ):
         mod.register(mcp, ctx)
     try:
         yield SimpleNamespace(
@@ -132,6 +153,7 @@ def app(cfg, _live):
             manager=manager,
             tools=mcp.tools,
             resources=mcp.resources,
+            prompts=mcp.prompts,
         )
     finally:
         manager.close()

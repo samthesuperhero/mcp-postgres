@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from mcp.types import ToolAnnotations
 
 from ..capabilities import CapabilityError, DbTier
@@ -79,6 +81,125 @@ def _referenced_by(db, oid) -> list[dict]:
         {"schema": schema, "table": table, "name": name, "definition": definition}
         for schema, table, name, definition in rows
     ]
+
+
+def collect_db_schema(db, max_tables: int = 500) -> dict:
+    """Compact structure of every non-system schema in the connected database.
+
+    Per schema, each table/view carries its columns (name, type, nullable, default), its
+    primary key, and its outbound foreign-key edges; each schema also lists its enum types
+    with labels. Deliberately omits indexes, sizes, and check/unique constraints to bound
+    the payload — ``describe_table`` gives the full picture of a single relation. Bounded to
+    ``max_tables`` relations; the result sets ``truncated`` when the cap is reached.
+
+    Built from a fixed handful of schema-wide catalog queries (not one per table), so its
+    cost is independent of how many tables the database has. Backs the ``schema://current``
+    resource.
+    """
+    dbname = db.query_scalar("SELECT current_database()")
+
+    _c, rel_rows = db.select(
+        "SELECT n.nspname AS schema, c.relname AS name, "
+        "       CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned table' "
+        "            WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized view' "
+        "            WHEN 'f' THEN 'foreign table' END AS kind "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') "
+        "  AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
+        "ORDER BY n.nspname, c.relname"
+    )
+    _c, col_rows = db.select(
+        "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default "
+        "FROM information_schema.columns "
+        "WHERE table_schema NOT LIKE 'pg_%' AND table_schema <> 'information_schema' "
+        "ORDER BY table_schema, table_name, ordinal_position"
+    )
+    _c, pk_rows = db.select(
+        "SELECT tc.table_schema, tc.table_name, kcu.column_name "
+        "FROM information_schema.table_constraints tc "
+        "JOIN information_schema.key_column_usage kcu "
+        "  ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema "
+        "WHERE tc.constraint_type = 'PRIMARY KEY' "
+        "  AND tc.table_schema NOT LIKE 'pg_%' AND tc.table_schema <> 'information_schema' "
+        "ORDER BY tc.table_schema, tc.table_name, kcu.ordinal_position"
+    )
+    _c, fk_rows = db.select(
+        "SELECT n.nspname AS schema, t.relname AS table, "
+        "       ARRAY(SELECT att.attname FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord) "
+        "             JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = k.attnum "
+        "             ORDER BY k.ord) AS columns, "
+        "       fn.nspname AS foreign_schema, ft.relname AS foreign_table, "
+        "       ARRAY(SELECT att.attname FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord) "
+        "             JOIN pg_attribute att ON att.attrelid = con.confrelid AND att.attnum = k.attnum "
+        "             ORDER BY k.ord) AS foreign_columns "
+        "FROM pg_constraint con "
+        "JOIN pg_class t ON t.oid = con.conrelid "
+        "JOIN pg_namespace n ON n.oid = t.relnamespace "
+        "JOIN pg_class ft ON ft.oid = con.confrelid "
+        "JOIN pg_namespace fn ON fn.oid = ft.relnamespace "
+        "WHERE con.contype = 'f' "
+        "  AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
+        "ORDER BY n.nspname, t.relname, con.conname"
+    )
+    _c, enum_rows = db.select(
+        "SELECT n.nspname AS schema, ty.typname AS name, "
+        "       ARRAY(SELECT e.enumlabel FROM pg_enum e "
+        "             WHERE e.enumtypid = ty.oid ORDER BY e.enumsortorder) AS labels "
+        "FROM pg_type ty JOIN pg_namespace n ON n.oid = ty.typnamespace "
+        "WHERE ty.typtype = 'e' "
+        "  AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
+        "ORDER BY n.nspname, ty.typname"
+    )
+
+    cols_by: dict = defaultdict(list)
+    for sch, tbl, name, dtype, is_nullable, default in col_rows:
+        cols_by[(sch, tbl)].append(
+            {"name": name, "type": dtype, "nullable": is_nullable == "YES", "default": default}
+        )
+    pk_by: dict = defaultdict(list)
+    for sch, tbl, col in pk_rows:
+        pk_by[(sch, tbl)].append(col)
+    fk_by: dict = defaultdict(list)
+    for sch, tbl, columns, fschema, ftable, fcolumns in fk_rows:
+        fk_by[(sch, tbl)].append(
+            {
+                "columns": list(columns),
+                "references": {"schema": fschema, "table": ftable, "columns": list(fcolumns)},
+            }
+        )
+    enums_by: dict = defaultdict(list)
+    for sch, name, labels in enum_rows:
+        enums_by[sch].append({"name": name, "labels": list(labels)})
+
+    schemas: dict = {}
+
+    def _schema(name: str) -> dict:
+        return schemas.setdefault(name, {"schema": name, "tables": [], "enums": []})
+
+    total, truncated = 0, False
+    for sch, name, kind in rel_rows:
+        if total >= max_tables:
+            truncated = True
+            break
+        _schema(sch)["tables"].append(
+            {
+                "name": name,
+                "kind": kind,
+                "columns": cols_by.get((sch, name), []),
+                "primary_key": pk_by.get((sch, name), []),
+                "foreign_keys": fk_by.get((sch, name), []),
+            }
+        )
+        total += 1
+    for sch, enums in enums_by.items():
+        _schema(sch)["enums"] = enums
+
+    return {
+        "database": dbname,
+        "schemas": list(schemas.values()),
+        "table_count": total,
+        "truncated": truncated,
+    }
 
 
 def register(mcp, ctx) -> None:

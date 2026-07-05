@@ -27,7 +27,16 @@ from .manager import DatabaseManager
 from .oauth import OAuthStore, PostgresOAuthProvider
 from .oauth.login import register_login_routes
 from .privclient import PrivClient
-from .tools import admin, config_files, discovery, introspection, query, schema
+from .tools import (
+    admin,
+    config_files,
+    discovery,
+    introspection,
+    observability,
+    prompts,
+    query,
+    schema,
+)
 
 log = logging.getLogger("mcp_postgres")
 
@@ -176,9 +185,11 @@ def build_server(
     introspection.register(mcp, ctx)
     schema.register(mcp, ctx)
     query.register(mcp, ctx)
+    observability.register(mcp, ctx)
     admin.register(mcp, ctx)
     config_files.register(mcp, ctx)
     discovery.register(mcp, ctx)
+    prompts.register(mcp, ctx)
 
     # The login page that gates the OAuth /authorize step (unauthenticated route).
     if oauth_provider is not None:
