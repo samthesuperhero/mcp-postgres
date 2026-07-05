@@ -22,6 +22,12 @@ The mcp-postgres development roadmap was defined in the plan
   every report) down to a count, moving the full list behind a `list_extensions` tool. Deferred by
   the user on 2026-07-05.
 
+**Prod validation (2026-07-05):** at **v0.11.1** the full live prod-DB suite — **201 tests** —
+passes on the deployment host (PostgreSQL, Python 3.13), exercising Phase 2 observability/ops and
+Phase 3 prompts + `schema://current` end-to-end against the real cluster. Two live-only bugs found
+and fixed in v0.11.1: a literal `%` colliding with a psycopg placeholder in `database_stats`, and
+`get_settings` treating a name prefix's `_` as a LIKE wildcard.
+
 **Why:** lets a future "propose next steps" pick up without re-discovering the roadmap.
 **How to apply:** next feature increment is the backlog trim (small) or a new phase; follow
 [[bump-version-each-commit]] and land each phase as its own commit.
