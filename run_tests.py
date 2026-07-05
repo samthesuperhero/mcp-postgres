@@ -82,20 +82,24 @@ def ensure_pytest() -> Path:
 
 
 def stage_workspace() -> str:
-    """Copy the parts of the checkout the tests read into a temp dir the service user owns.
+    """Copy the checkout into a temp dir the service user owns, so pytest can read it.
 
-    `mcp_postgres` and `pytest` import from the venv, so only `tests/` and
-    `packaging/` (the latter for test_config_schema's template check) plus
-    `pyproject.toml` (so pytest's rootdir/config resolve) are needed.
+    The mcp-postgres user often can't traverse the checkout (a 0700 home), so rather
+    than change its permissions we hand it a private copy. The whole tree is copied
+    (minus VCS/build/cache noise) so every repo-relative path a test resolves is
+    present -- e.g. `packaging/config.toml.template` and the root `privhelper.py`.
+    `mcp_postgres` and `pytest` still import from the venv, not from this copy.
     """
     ws = tempfile.mkdtemp(prefix="mcp-postgres-tests-")
-    for rel in ("tests", "packaging"):
-        shutil.copytree(
-            install.REPO / rel,
-            Path(ws) / rel,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
-    shutil.copy2(install.REPO / "pyproject.toml", Path(ws) / "pyproject.toml")
+    shutil.copytree(
+        install.REPO,
+        ws,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", ".claude", "__pycache__", "*.pyc", "*.egg-info",
+            ".pytest_cache", "build", "dist",
+        ),
+    )
     install._chown_tree(Path(ws))  # hand the whole workspace to the service user
     return ws
 
